@@ -1,0 +1,204 @@
+
+Streamlit App – Business Requirements (Refined)
+Overall Idea
+Replace the current Excel-based effort tracker with a simple, structured internal app that:
+
+Makes it easy for team members to update progress
+Gives leads a clear, real-time view of work and effort
+Allows basic management of team members
+Removes Excel pain points (manual formatting, overwrites, inconsistencies)
+
+
+Core Tabs in the Application
+Tab 1: Task Updates (Primary Working Screen)
+This is the main screen used by the team daily.
+Purpose
+Allow team members to create, update, and maintain tasks as work progresses.
+Simplified Task Fields (Column Names)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Current Excel ConceptNew App Field NameDescriptionTask DescriptionTask TitleShort, clear description of the workWhyBusiness ReasonWhy this task is neededWherePlatform / AreaSystem or platform involvedAssigneeOwnerPrimary person doing the workReviewerReviewerPerson reviewing or approvingStart DateStart DateWhen work startedClosed DateEnd DateWhen work closedStatusStatusQueued / In Progress / On Hold / ClosedActual Effort (days)Effort (Days)Total effort spent% CompletedCompletion %Progress indicatorRelease JIRAJIRA / ReferenceOptional reference link or IDStatus UpdateProgress NotesOngoing updates and comments
+Behaviour Expectations
+
+Team members can:
+
+Add new tasks
+Update status, effort, % completion
+Add time‑based progress notes
+
+
+Updates should feel quick and low effort
+System should prevent obvious gaps (e.g. closed task with no end date)
+
+
+Tab 2: Team Overview (For Leads & Managers)
+This tab is read‑only for most users and used for reviews, stand-ups, and reporting.
+Purpose
+Provide a clear, high-level picture of the team’s workload and progress.
+Business Views Needed
+
+All tasks in one place
+Filters by:
+
+Owner
+Status
+Platform / Area
+Date ranges
+
+
+Clear visibility of:
+
+What’s in progress
+What’s blocked or queued
+Recently completed work
+Long-running tasks
+
+
+Easy to answer:
+
+“Who is working on what?”
+“How much effort is being spent?”
+“What isn’t moving?”
+
+
+
+Key Principle
+Leads should not need to chase people or open Excel to understand status.
+
+Tab 3: Team Management
+This tab is for basic admin or lead usage.
+Purpose
+Maintain a clean, consistent list of people involved in the work.
+Team Member Fields
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+FieldDescriptionNameTeam member nameRoleContributor / Reviewer / LeadActive StatusActive / InactiveDefault ReviewerOptional mappingNotesOptional
+Business Rules
+
+Only active team members can be assigned to tasks
+Names should be consistent (no free‑text typing per task)
+Helps avoid Excel problems like duplicate or inconsistent names
+
+
+General Business Expectations
+Usability
+
+App should feel simpler than Excel
+Minimal clicks to update daily progress
+Clear and readable layout
+
+Consistency
+
+Structured fields instead of long free‑text
+Common statuses and naming
+Easier historical tracking
+
+Transparency
+
+Everyone sees the same data
+Progress and effort are visible and current
+History of updates is preserved
+
+
+Success Criteria
+The app is successful when:
+
+Team members prefer it over Excel
+Updates happen continuously, not in bursts
+Leads rely on the app for visibility
+Excel is no longer needed for effort tracking
