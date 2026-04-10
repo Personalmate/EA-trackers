@@ -1,0 +1,1229 @@
+import pandas as pd
+from datetime import date, datetime, timedelta
+from snowflake.snowpark.context import get_active_session
+import streamlit as st
+
+st.set_page_config(layout="wide")
+
+st.markdown("""
+<style>
+* { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+
+html, body, [data-testid="stApp"], [data-testid="stAppViewContainer"],
+[data-testid="stHeader"], [data-testid="stMain"],
+[data-testid="stMainBlockContainer"], [data-testid="stVerticalBlock"],
+[data-testid="stHorizontalBlock"], [data-testid="stForm"],
+[data-testid="stBottomBlockContainer"], .main, .block-container,
+section[data-testid="stSidebar"], [data-testid="stSidebarContent"] {
+    background-color: #0e1117 !important; color: #fafafa !important;
+}
+[data-testid="stSidebar"] { background-color: #161b22 !important; }
+
+p, span, label, div, li, ul, ol, h1, h2, h3, h4, h5, h6, a,
+strong, em, b, i, small, td, th, caption, figcaption,
+[data-testid="stMarkdown"], [data-testid="stMarkdown"] p,
+[data-testid="stMarkdown"] span, [data-testid="stMarkdown"] li,
+[data-testid="stMarkdown"] strong, [data-testid="stMarkdown"] em,
+[data-testid="stMarkdown"] h1, [data-testid="stMarkdown"] h2,
+[data-testid="stMarkdown"] h3, [data-testid="stMarkdown"] h4,
+[data-testid="stText"], [data-testid="stCaptionContainer"],
+[data-testid="stCaptionContainer"] *, [class*="Caption"] {
+    color: #fafafa !important;
+}
+
+[data-testid="stTextInput"] label, [data-testid="stTextInput"] label p,
+[data-testid="stTextArea"] label, [data-testid="stTextArea"] label p,
+[data-testid="stSelectbox"] label, [data-testid="stSelectbox"] label p,
+[data-testid="stMultiSelect"] label, [data-testid="stMultiSelect"] label p,
+[data-testid="stNumberInput"] label, [data-testid="stNumberInput"] label p,
+[data-testid="stDateInput"] label, [data-testid="stDateInput"] label p,
+[data-testid="stCheckbox"] label, [data-testid="stCheckbox"] label p,
+[data-testid="stRadio"] label, [data-testid="stRadio"] label p,
+[data-testid="stSlider"] label, [data-testid="stSlider"] label p,
+[data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] p,
+[data-testid="stWidgetLabel"] span {
+    color: #fafafa !important;
+}
+
+[data-testid="stSelectbox"] > div > div,
+[data-baseweb="select"] > div,
+textarea, input,
+[data-testid="stTextArea"] textarea, [data-testid="stTextArea"] > div,
+[data-testid="stTextInput"] > div > div, [data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input, [data-testid="stDateInput"] input {
+    background-color: #1c2030 !important; color: #fafafa !important;
+    border-color: #3a3f52 !important; border-radius: 6px !important;
+}
+input::placeholder, textarea::placeholder { color: #6b7280 !important; }
+input:focus, textarea:focus { border-color: #3b82f6 !important; box-shadow: 0 0 0 1px #3b82f6 !important; }
+input:disabled, textarea:disabled { background-color: #12151c !important; color: #8b95a5 !important; border-color: #2a3040 !important; }
+
+[data-baseweb="popover"], [data-baseweb="popover"] > div,
+[data-baseweb="menu"], [data-baseweb="menu"] li,
+ul[role="listbox"], ul[role="listbox"] li,
+[role="option"] {
+    background-color: #1c2030 !important; color: #fafafa !important;
+}
+[data-baseweb="menu"] li:hover, ul[role="listbox"] li:hover,
+[role="option"]:hover { background-color: #2a3040 !important; }
+[data-baseweb="select"] svg { fill: #fafafa !important; }
+[data-baseweb="select"] [data-testid="stMarkdown"],
+[data-baseweb="select"] span,
+[data-baseweb="select"] div[class*="value"] { color: #fafafa !important; }
+
+[data-testid="stTabs"] button {
+    background-color: transparent !important; color: #8b95a5 !important;
+    font-weight: 600 !important; font-size: 16px !important;
+    letter-spacing: 0.3px !important; padding: 12px 24px !important;
+    text-transform: uppercase !important;
+}
+[data-testid="stTabs"] button[aria-selected="true"] { color: #fafafa !important; border-bottom: 3px solid #3b82f6 !important; }
+[data-testid="stTabs"] button:hover { color: #c0c8d4 !important; }
+[data-testid="stTabs"], [data-testid="stTabs"] > div { background-color: #0e1117 !important; }
+
+button { background-color: #1c2030 !important; color: #fafafa !important; border-color: #3a3f52 !important; border-radius: 6px !important; font-weight: 500 !important; }
+button:hover { background-color: #2a3040 !important; border-color: #4a5068 !important; }
+[data-testid="baseButton-primary"] { background: linear-gradient(135deg, #3b82f6, #2563eb) !important; color: #ffffff !important; border: none !important; }
+[data-testid="baseButton-primary"]:hover { background: linear-gradient(135deg, #2563eb, #1d4ed8) !important; }
+[data-testid="stForm"] [data-testid="baseButton-primary"],
+[data-testid="stForm"] [data-testid="stFormSubmitButton"] button {
+    background: linear-gradient(135deg, #238636, #1a7f37) !important; color: #ffffff !important; border: none !important;
+    font-weight: 600 !important; font-size: 15px !important; padding: 10px 20px !important;
+}
+[data-testid="stForm"] [data-testid="baseButton-primary"]:hover,
+[data-testid="stForm"] [data-testid="stFormSubmitButton"] button:hover {
+    background: linear-gradient(135deg, #2ea043, #238636) !important;
+}
+
+[data-testid="stExpander"] { background-color: #161b22 !important; border: 1px solid #2a3040 !important; border-radius: 8px !important; margin-bottom: 8px !important; }
+[data-testid="stExpander"] summary { color: #fafafa !important; }
+[data-testid="stExpander"] summary:hover { color: #3b82f6 !important; }
+[data-testid="stExpander"] > div, [data-testid="stExpander"] details,
+[data-testid="stExpander"] details > div {
+    background-color: #161b22 !important; color: #fafafa !important;
+}
+[data-testid="stExpander"] p, [data-testid="stExpander"] span,
+[data-testid="stExpander"] label, [data-testid="stExpander"] strong {
+    color: #fafafa !important;
+}
+
+[data-testid="stDataFrame"] { border-radius: 8px !important; overflow: hidden !important; }
+[data-testid="stDataFrame"] > div {
+    background-color: #161b22 !important; color: #fafafa !important;
+    --gdg-bg-cell: #161b22 !important; --gdg-bg-cell-medium: #161b22 !important;
+    --gdg-bg-header: #1c2030 !important; --gdg-bg-header-hovered: #2a3040 !important;
+    --gdg-text-dark: #fafafa !important; --gdg-text-medium: #c0c8d4 !important;
+    --gdg-text-light: #8b95a5 !important; --gdg-text-header: #8b95a5 !important;
+    --gdg-border-color: #2a3040 !important; --gdg-horizontal-border-color: #2a3040 !important;
+    --gdg-accent-color: #3b82f6 !important; --gdg-accent-fg: #ffffff !important;
+    --gdg-link-color: #3b82f6 !important;
+}
+
+[data-testid="stForm"] { background-color: #0e1117 !important; border-color: #2a3040 !important; }
+[data-testid="stForm"] > div { background-color: #0e1117 !important; }
+
+[data-testid="stAlert"], [role="alert"] { background-color: #161b22 !important; color: #fafafa !important; border-color: #2a3040 !important; }
+[data-testid="stAlert"] p, [role="alert"] p { color: #fafafa !important; }
+
+hr { border-color: #2a3040 !important; background-color: #2a3040 !important; }
+
+[data-testid="stColumn"], [data-testid="stColumn"] > div { background-color: transparent !important; }
+
+.header-container {
+    background: linear-gradient(135deg, #0f2744 0%, #1a3a5c 50%, #1e4976 100%);
+    border-radius: 12px; padding: 20px 24px; margin-bottom: 20px; text-align: center;
+    border: 1px solid #1e3a5f;
+}
+.header-title { font-size: 26px !important; font-weight: 700; color: white; margin: 0; letter-spacing: -0.3px; }
+.header-sub { font-size: 13px; color: #8bacc7; margin: 4px 0 0 0; }
+
+.metric-card {
+    background: #161b22; border: 1px solid #2a3040; border-radius: 10px;
+    padding: 16px 20px; text-align: center;
+}
+.metric-value { font-size: 28px; font-weight: 700; margin: 0; }
+.metric-label { font-size: 11px; color: #8b95a5 !important; margin: 6px 0 0 0; text-transform: uppercase; letter-spacing: 0.8px; font-weight: 500; }
+.mc-blue { border-left: 3px solid #3b82f6; } .mc-blue .metric-value { color: #3b82f6 !important; }
+.mc-green { border-left: 3px solid #22c55e; } .mc-green .metric-value { color: #22c55e !important; }
+.mc-amber { border-left: 3px solid #f59e0b; } .mc-amber .metric-value { color: #f59e0b !important; }
+.mc-red { border-left: 3px solid #ef4444; } .mc-red .metric-value { color: #ef4444 !important; }
+.mc-purple { border-left: 3px solid #a78bfa; } .mc-purple .metric-value { color: #a78bfa !important; }
+.mc-teal { border-left: 3px solid #14b8a6; } .mc-teal .metric-value { color: #14b8a6 !important; }
+
+.section-label {
+    font-size: 11px; font-weight: 600; color: #3b82f6 !important; text-transform: uppercase;
+    letter-spacing: 1px; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #2a3040;
+}
+
+.status-badge {
+    display: inline-block; padding: 3px 10px; border-radius: 12px;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.3px;
+}
+.status-queued { background: #1e293b; color: #94a3b8; }
+.status-inprogress { background: #172554; color: #60a5fa; }
+.status-onhold { background: #451a03; color: #fbbf24; }
+.status-closed { background: #052e16; color: #4ade80; }
+
+.note-card {
+    background: #1c2030; border-left: 3px solid #3b82f6; border-radius: 0 6px 6px 0;
+    padding: 10px 14px; margin-bottom: 8px;
+}
+.note-meta { font-size: 11px; color: #8b95a5 !important; margin-bottom: 4px; }
+.note-text { font-size: 13px; color: #e6edf3 !important; }
+
+.task-detail { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 6px; }
+.task-detail-item { font-size: 12px; color: #8b95a5; }
+.task-detail-item strong { color: #c0c8d4 !important; }
+
+.progress-bar-outer {
+    background: #1c2030; border-radius: 6px; height: 8px; width: 100%; overflow: hidden;
+}
+.progress-bar-inner { height: 100%; border-radius: 6px; transition: width 0.3s ease; }
+
+.page-info { color: #8b95a5 !important; font-size: 13px; text-align: center; padding: 8px 0; }
+
+.success-box {
+    background: #0d2818; border: 1px solid #238636; border-left: 4px solid #238636;
+    border-radius: 8px; padding: 14px 18px; font-size: 13px; color: #7ee787;
+}
+.warning-box {
+    background: #2d1b00; border: 1px solid #f59e0b; border-left: 4px solid #f59e0b;
+    border-radius: 8px; padding: 14px 18px; font-size: 13px; color: #fbbf24;
+}
+
+.long-running-flag {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; font-weight: 600; background: #451a03; color: #fbbf24;
+}
+
+.main .block-container { padding-top: 1rem; padding-bottom: 1rem; max-width: 100%; }
+</style>
+""", unsafe_allow_html=True)
+
+
+# ── Session State ──
+_defaults = {
+    "success_message": None,
+    "task_page": 0,
+    "edit_task_id": None,
+    "delete_task_id": None,
+    "delete_confirm": False,
+    "delete_member_id": None,
+    "delete_member_confirm": False,
+}
+for _k, _v in _defaults.items():
+    if _k not in st.session_state:
+        st.session_state[_k] = _v
+
+
+# ── Snowpark Session ──
+try:
+    session = get_active_session()
+except Exception:
+    session = None
+
+
+# ── Constants ──
+SCHEMA = "DB_CORE_PRD.BACKUP_OPS"
+TBL_MEMBERS = f"{SCHEMA}.TEAM_MEMBERS"
+TBL_TASKS = f"{SCHEMA}.TASKS"
+TBL_NOTES = f"{SCHEMA}.PROGRESS_NOTES"
+
+STATUS_OPTIONS = ["Queued", "In Progress", "On Hold", "Closed"]
+ROLE_OPTIONS = ["Contributor", "Reviewer", "Lead"]
+ACTIVE_OPTIONS = ["Active", "Inactive"]
+RECORDS_PER_PAGE = 20
+
+
+def _safe_sql(val):
+    if val is None:
+        return ""
+    return str(val).replace("'", "''")
+
+
+def _status_badge(status):
+    cls_map = {"Queued": "status-queued", "In Progress": "status-inprogress", "On Hold": "status-onhold", "Closed": "status-closed"}
+    cls = cls_map.get(status, "status-queued")
+    return f'<span class="status-badge {cls}">{status}</span>'
+
+
+def _progress_bar_html(pct):
+    pct = max(0, min(100, float(pct or 0)))
+    if pct >= 100:
+        color = "#22c55e"
+    elif pct >= 60:
+        color = "#3b82f6"
+    elif pct >= 30:
+        color = "#f59e0b"
+    else:
+        color = "#ef4444"
+    return f'<div class="progress-bar-outer"><div class="progress-bar-inner" style="width:{pct}%;background:{color};"></div></div>'
+
+
+def _metric_card(value, label, color="blue"):
+    return f'<div class="metric-card mc-{color}"><p class="metric-value">{value}</p><p class="metric-label">{label}</p></div>'
+
+
+def _check_tables_exist():
+    if session is None:
+        return False, [TBL_MEMBERS, TBL_TASKS, TBL_NOTES]
+    missing = []
+    for tbl in [TBL_MEMBERS, TBL_TASKS, TBL_NOTES]:
+        try:
+            session.sql(f"SELECT 1 FROM {tbl} LIMIT 1").collect()
+        except Exception:
+            missing.append(tbl)
+    return len(missing) == 0, missing
+
+
+# ── Data Access ──
+def load_active_members():
+    try:
+        df = session.sql(f"SELECT NAME FROM {TBL_MEMBERS} WHERE ACTIVE_STATUS = 'Active' ORDER BY NAME").to_pandas()
+        return df["NAME"].tolist() if not df.empty else []
+    except Exception:
+        return []
+
+
+def load_all_members():
+    try:
+        df = session.sql(f"SELECT * FROM {TBL_MEMBERS} ORDER BY ACTIVE_STATUS ASC, NAME ASC").to_pandas()
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
+def load_tasks(status_filter=None, owner_filter=None, platform_filter=None,
+               start_from=None, start_to=None):
+    try:
+        where = []
+        if status_filter and status_filter != "All":
+            where.append(f"STATUS = '{_safe_sql(status_filter)}'")
+        if owner_filter and owner_filter != "All":
+            where.append(f"OWNER = '{_safe_sql(owner_filter)}'")
+        if platform_filter and platform_filter != "All":
+            where.append(f"PLATFORM_AREA = '{_safe_sql(platform_filter)}'")
+        if start_from:
+            where.append(f"START_DATE >= '{start_from}'")
+        if start_to:
+            where.append(f"START_DATE <= '{start_to}'")
+        sql = f"SELECT * FROM {TBL_TASKS}"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY CASE STATUS WHEN 'In Progress' THEN 1 WHEN 'Queued' THEN 2 WHEN 'On Hold' THEN 3 ELSE 4 END, UPDATED_AT DESC"
+        return session.sql(sql).to_pandas()
+    except Exception as e:
+        st.error(f"Error loading tasks: {e}")
+        return pd.DataFrame()
+
+
+def load_notes_for_task(task_id):
+    try:
+        df = session.sql(f"SELECT * FROM {TBL_NOTES} WHERE TASK_ID = {int(task_id)} ORDER BY CREATED_AT DESC").to_pandas()
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
+def get_distinct_platforms():
+    try:
+        df = session.sql(f"SELECT DISTINCT PLATFORM_AREA FROM {TBL_TASKS} WHERE PLATFORM_AREA IS NOT NULL AND PLATFORM_AREA != '' ORDER BY PLATFORM_AREA").to_pandas()
+        return df["PLATFORM_AREA"].tolist() if not df.empty else []
+    except Exception:
+        return []
+
+
+def get_distinct_owners():
+    try:
+        df = session.sql(f"SELECT DISTINCT OWNER FROM {TBL_TASKS} ORDER BY OWNER").to_pandas()
+        return df["OWNER"].tolist() if not df.empty else []
+    except Exception:
+        return []
+
+
+def insert_member(name, role, active_status, default_reviewer, notes):
+    try:
+        check = session.sql(f"SELECT COUNT(*) AS CNT FROM {TBL_MEMBERS} WHERE UPPER(NAME) = UPPER('{_safe_sql(name)}')").to_pandas()
+        if check["CNT"].iloc[0] > 0:
+            return False, f"A team member named '{name}' already exists."
+        dr = f"'{_safe_sql(default_reviewer)}'" if default_reviewer else "NULL"
+        nt = f"'{_safe_sql(notes)}'" if notes else "NULL"
+        session.sql(f"""
+            INSERT INTO {TBL_MEMBERS} (NAME, ROLE, ACTIVE_STATUS, DEFAULT_REVIEWER, NOTES)
+            VALUES ('{_safe_sql(name)}', '{_safe_sql(role)}', '{_safe_sql(active_status)}', {dr}, {nt})
+        """).collect()
+        return True, f"Team member '{name}' added successfully."
+    except Exception as e:
+        return False, f"Error adding member: {e}"
+
+
+def update_member(member_id, name, role, active_status, default_reviewer, notes):
+    try:
+        check = session.sql(f"SELECT COUNT(*) AS CNT FROM {TBL_MEMBERS} WHERE UPPER(NAME) = UPPER('{_safe_sql(name)}') AND MEMBER_ID != {int(member_id)}").to_pandas()
+        if check["CNT"].iloc[0] > 0:
+            return False, f"Another team member named '{name}' already exists."
+        if active_status == "Inactive":
+            open_tasks = session.sql(f"SELECT COUNT(*) AS CNT FROM {TBL_TASKS} WHERE (OWNER = '{_safe_sql(name)}' OR REVIEWER = '{_safe_sql(name)}') AND STATUS != 'Closed'").to_pandas()
+            if open_tasks["CNT"].iloc[0] > 0:
+                return False, f"Cannot deactivate '{name}' -- they have {int(open_tasks['CNT'].iloc[0])} open task(s). Close or reassign those tasks first."
+        dr = f"'{_safe_sql(default_reviewer)}'" if default_reviewer else "NULL"
+        nt = f"'{_safe_sql(notes)}'" if notes else "NULL"
+        session.sql(f"""
+            UPDATE {TBL_MEMBERS} SET
+                NAME = '{_safe_sql(name)}',
+                ROLE = '{_safe_sql(role)}',
+                ACTIVE_STATUS = '{_safe_sql(active_status)}',
+                DEFAULT_REVIEWER = {dr},
+                NOTES = {nt},
+                UPDATED_AT = CURRENT_TIMESTAMP()
+            WHERE MEMBER_ID = {int(member_id)}
+        """).collect()
+        return True, f"Team member '{name}' updated successfully."
+    except Exception as e:
+        return False, f"Error updating member: {e}"
+
+
+def delete_member(member_id, name):
+    try:
+        open_tasks = session.sql(f"SELECT COUNT(*) AS CNT FROM {TBL_TASKS} WHERE (OWNER = '{_safe_sql(name)}' OR REVIEWER = '{_safe_sql(name)}') AND STATUS != 'Closed'").to_pandas()
+        if open_tasks["CNT"].iloc[0] > 0:
+            return False, f"Cannot delete '{name}' -- they have {int(open_tasks['CNT'].iloc[0])} open task(s)."
+        session.sql(f"DELETE FROM {TBL_MEMBERS} WHERE MEMBER_ID = {int(member_id)}").collect()
+        return True, f"Team member '{name}' deleted."
+    except Exception as e:
+        return False, f"Error deleting member: {e}"
+
+
+def insert_task(title, reason, platform, owner, reviewer, start_dt, end_dt, status, effort, pct, jira):
+    try:
+        end_val = f"'{end_dt}'" if end_dt else "NULL"
+        rev_val = f"'{_safe_sql(reviewer)}'" if reviewer else "NULL"
+        reason_val = f"'{_safe_sql(reason)}'" if reason else "NULL"
+        platform_val = f"'{_safe_sql(platform)}'" if platform else "NULL"
+        jira_val = f"'{_safe_sql(jira)}'" if jira else "NULL"
+        session.sql(f"""
+            INSERT INTO {TBL_TASKS} (TASK_TITLE, BUSINESS_REASON, PLATFORM_AREA, OWNER, REVIEWER,
+                               START_DATE, END_DATE, STATUS, EFFORT_DAYS, COMPLETION_PCT, JIRA_REFERENCE)
+            VALUES ('{_safe_sql(title)}', {reason_val}, {platform_val}, '{_safe_sql(owner)}', {rev_val},
+                    '{start_dt}', {end_val}, '{_safe_sql(status)}', {float(effort)}, {float(pct)}, {jira_val})
+        """).collect()
+        return True, f"Task '{title}' created successfully."
+    except Exception as e:
+        return False, f"Error creating task: {e}"
+
+
+def update_task(task_id, title, reason, platform, owner, reviewer, start_dt, end_dt, status, effort, pct, jira):
+    try:
+        end_val = f"'{end_dt}'" if end_dt else "NULL"
+        rev_val = f"'{_safe_sql(reviewer)}'" if reviewer else "NULL"
+        reason_val = f"'{_safe_sql(reason)}'" if reason else "NULL"
+        platform_val = f"'{_safe_sql(platform)}'" if platform else "NULL"
+        jira_val = f"'{_safe_sql(jira)}'" if jira else "NULL"
+        session.sql(f"""
+            UPDATE {TBL_TASKS} SET
+                TASK_TITLE = '{_safe_sql(title)}',
+                BUSINESS_REASON = {reason_val},
+                PLATFORM_AREA = {platform_val},
+                OWNER = '{_safe_sql(owner)}',
+                REVIEWER = {rev_val},
+                START_DATE = '{start_dt}',
+                END_DATE = {end_val},
+                STATUS = '{_safe_sql(status)}',
+                EFFORT_DAYS = {float(effort)},
+                COMPLETION_PCT = {float(pct)},
+                JIRA_REFERENCE = {jira_val},
+                UPDATED_AT = CURRENT_TIMESTAMP()
+            WHERE TASK_ID = {int(task_id)}
+        """).collect()
+        return True, "Task updated successfully."
+    except Exception as e:
+        return False, f"Error updating task: {e}"
+
+
+def delete_task(task_id):
+    try:
+        session.sql(f"DELETE FROM {TBL_NOTES} WHERE TASK_ID = {int(task_id)}").collect()
+        session.sql(f"DELETE FROM {TBL_TASKS} WHERE TASK_ID = {int(task_id)}").collect()
+        return True, "Task deleted successfully."
+    except Exception as e:
+        return False, f"Error deleting task: {e}"
+
+
+def insert_note(task_id, note_text, created_by):
+    try:
+        by_val = f"'{_safe_sql(created_by)}'" if created_by else "NULL"
+        session.sql(f"""
+            INSERT INTO {TBL_NOTES} (TASK_ID, NOTE_TEXT, CREATED_BY)
+            VALUES ({int(task_id)}, '{_safe_sql(note_text)}', {by_val})
+        """).collect()
+        return True, "Note added."
+    except Exception as e:
+        return False, f"Error adding note: {e}"
+
+
+def validate_task(title, owner, start_dt, end_dt, status, effort, pct):
+    errors = []
+    if not title or not title.strip():
+        errors.append("Task Title is required.")
+    if not owner:
+        errors.append("Owner is required.")
+    if not start_dt:
+        errors.append("Start Date is required.")
+    if status == "Closed" and not end_dt:
+        errors.append("End Date is required when status is Closed.")
+    if end_dt and start_dt and end_dt < start_dt:
+        errors.append("End Date cannot be before Start Date.")
+    if effort is not None and effort < 0:
+        errors.append("Effort (Days) cannot be negative.")
+    if pct is not None and (pct < 0 or pct > 100):
+        errors.append("Completion % must be between 0 and 100.")
+    if pct == 100 and status != "Closed":
+        errors.append("Status should be 'Closed' when Completion is 100%.")
+    return errors
+
+
+# ── Check Tables ──
+tables_ok, missing_tables = _check_tables_exist()
+
+# ── Header ──
+st.markdown("""
+<div class="header-container">
+    <p class="header-title">Team Effort Tracker</p>
+    <p class="header-sub">Track tasks, effort, and team progress</p>
+</div>
+""", unsafe_allow_html=True)
+
+if not tables_ok:
+    st.error(f"Missing table(s): {', '.join(missing_tables)}. Please create them in Snowflake before using this app.")
+    st.stop()
+
+# ── Success Banner ──
+if st.session_state.get("success_message"):
+    st.markdown(f'<div class="success-box">{st.session_state["success_message"]}</div>', unsafe_allow_html=True)
+    st.session_state["success_message"] = None
+
+# ── Tabs ──
+tab1, tab2, tab3, tab4 = st.tabs(["TASK UPDATES", "TEAM OVERVIEW", "TEAM MANAGEMENT", "DATA IMPORT"])
+
+
+# ═══════════════════════════════════════════════════════════════
+# TAB 1: TASK UPDATES
+# ═══════════════════════════════════════════════════════════════
+with tab1:
+    active_members = load_active_members()
+
+    if not active_members:
+        st.markdown('<div class="warning-box">No active team members found. Please add team members in the <strong>Team Management</strong> tab first.</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="section-label">Add New Task</div>', unsafe_allow_html=True)
+
+    with st.form("add_task_form", clear_on_submit=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            new_title = st.text_input("Task Title *", placeholder="Short description of the work")
+            new_reason = st.text_area("Business Reason", placeholder="Why is this task needed?", height=80)
+            new_platform = st.text_input("Platform / Area", placeholder="e.g. Snowflake, API, Dashboard")
+            new_owner = st.selectbox("Owner *", options=[""] + active_members, format_func=lambda x: "Select owner..." if x == "" else x)
+            new_reviewer = st.selectbox("Reviewer", options=[""] + active_members, format_func=lambda x: "No reviewer" if x == "" else x)
+        with c2:
+            new_start = st.date_input("Start Date *", value=date.today())
+            new_end = st.date_input("End Date", value=None)
+            new_status = st.selectbox("Status", STATUS_OPTIONS, index=0)
+            new_effort = st.number_input("Effort (Days)", min_value=0.0, value=0.0, step=0.5, format="%.1f")
+            new_pct = st.number_input("Completion %", min_value=0.0, max_value=100.0, value=0.0, step=5.0, format="%.0f")
+            new_jira = st.text_input("JIRA / Reference", placeholder="e.g. PROJ-1234")
+
+        submitted = st.form_submit_button("Create Task", type="primary", use_container_width=True)
+        if submitted:
+            errs = validate_task(new_title, new_owner, new_start, new_end, new_status, new_effort, new_pct)
+            if errs:
+                for e in errs:
+                    st.error(e)
+            else:
+                ok, msg = insert_task(new_title, new_reason, new_platform, new_owner,
+                                      new_reviewer if new_reviewer else None,
+                                      new_start, new_end, new_status, new_effort, new_pct, new_jira)
+                if ok:
+                    st.session_state["success_message"] = msg
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+    st.markdown("---")
+    st.markdown('<div class="section-label">Existing Tasks</div>', unsafe_allow_html=True)
+
+    fc1, fc2 = st.columns([1, 3])
+    with fc1:
+        filter_status = st.selectbox("Filter by Status", ["All"] + STATUS_OPTIONS, key="tab1_status_filter")
+
+    tasks_df = load_tasks(status_filter=filter_status if filter_status != "All" else None)
+
+    if tasks_df.empty:
+        st.info("No tasks found. Create your first task above.")
+    else:
+        total = len(tasks_df)
+        page = st.session_state.get("task_page", 0)
+        total_pages = max(1, (total + RECORDS_PER_PAGE - 1) // RECORDS_PER_PAGE)
+        page = min(page, total_pages - 1)
+        start_idx = page * RECORDS_PER_PAGE
+        end_idx = min(start_idx + RECORDS_PER_PAGE, total)
+        page_df = tasks_df.iloc[start_idx:end_idx]
+
+        st.markdown(f'<p class="page-info">Showing {start_idx+1} to {end_idx} of {total} tasks (Page {page+1} of {total_pages})</p>', unsafe_allow_html=True)
+
+        for _, row in page_df.iterrows():
+            task_id = int(row["TASK_ID"])
+            status = row.get("STATUS", "Queued")
+            pct = float(row.get("COMPLETION_PCT", 0) or 0)
+            effort = float(row.get("EFFORT_DAYS", 0) or 0)
+            owner = row.get("OWNER", "")
+            reviewer = row.get("REVIEWER", "") or ""
+            title = row.get("TASK_TITLE", "")
+            start_dt = row.get("START_DATE", "")
+            end_dt = row.get("END_DATE", "")
+            platform = row.get("PLATFORM_AREA", "") or ""
+            jira = row.get("JIRA_REFERENCE", "") or ""
+
+            long_flag = ""
+            if status != "Closed" and start_dt:
+                try:
+                    sd = pd.to_datetime(start_dt).date() if not isinstance(start_dt, date) else start_dt
+                    if (date.today() - sd).days > 30:
+                        long_flag = ' <span class="long-running-flag">30+ days</span>'
+                except Exception:
+                    pass
+
+            with st.expander(f"**{title}** -- {owner} | {status}", expanded=False):
+                st.markdown(f"""
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                    <span style="font-size:14px;font-weight:600;color:#e6edf3;">{title}{long_flag}</span>
+                    {_status_badge(status)}
+                </div>
+                <div class="task-detail">
+                    <div class="task-detail-item"><strong>Owner:</strong> {owner}</div>
+                    <div class="task-detail-item"><strong>Reviewer:</strong> {reviewer or '--'}</div>
+                    <div class="task-detail-item"><strong>Platform:</strong> {platform or '--'}</div>
+                    <div class="task-detail-item"><strong>Start:</strong> {start_dt}</div>
+                    <div class="task-detail-item"><strong>End:</strong> {end_dt or '--'}</div>
+                    <div class="task-detail-item"><strong>Effort:</strong> {effort:.1f} days</div>
+                    <div class="task-detail-item"><strong>JIRA:</strong> {jira or '--'}</div>
+                </div>
+                <div style="margin-top:8px;display:flex;align-items:center;gap:12px;">
+                    <span style="font-size:12px;color:#8b95a5;">{pct:.0f}%</span>
+                    <div style="flex:1;">{_progress_bar_html(pct)}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                st.markdown('<div class="section-label" style="margin-top:12px;">Quick Update</div>', unsafe_allow_html=True)
+                qc1, qc2, qc3 = st.columns(3)
+                with qc1:
+                    q_status = st.selectbox("Status", STATUS_OPTIONS, index=STATUS_OPTIONS.index(status) if status in STATUS_OPTIONS else 0, key=f"qs_{task_id}")
+                with qc2:
+                    q_effort = st.number_input("Effort (Days)", min_value=0.0, value=float(effort), step=0.5, format="%.1f", key=f"qe_{task_id}")
+                with qc3:
+                    q_pct = st.number_input("Completion %", min_value=0.0, max_value=100.0, value=float(pct), step=5.0, format="%.0f", key=f"qp_{task_id}")
+
+                qb1, qb2, qb3, qb4 = st.columns([1, 1, 1, 1])
+                with qb1:
+                    if st.button("Save", key=f"qsave_{task_id}", use_container_width=True):
+                        current_end = end_dt
+                        if q_status == "Closed" and not current_end:
+                            st.error("Set an End Date before closing this task. Use Edit to add one.")
+                        elif q_pct == 100 and q_status != "Closed":
+                            st.error("Status should be 'Closed' when Completion is 100%.")
+                        else:
+                            ok, msg = update_task(task_id, title, row.get("BUSINESS_REASON", ""),
+                                                  platform, owner, reviewer if reviewer else None,
+                                                  start_dt, current_end, q_status, q_effort, q_pct, jira)
+                            if ok:
+                                st.session_state["success_message"] = "Task updated."
+                                st.rerun()
+                            else:
+                                st.error(msg)
+                with qb2:
+                    if st.button("Edit All Fields", key=f"edit_{task_id}", use_container_width=True):
+                        st.session_state["edit_task_id"] = task_id
+                        st.rerun()
+                with qb3:
+                    if st.session_state.get("delete_task_id") == task_id and st.session_state.get("delete_confirm"):
+                        if st.button("Confirm Delete", key=f"cdel_{task_id}", type="primary", use_container_width=True):
+                            ok, msg = delete_task(task_id)
+                            st.session_state["delete_task_id"] = None
+                            st.session_state["delete_confirm"] = False
+                            if ok:
+                                st.session_state["success_message"] = msg
+                                st.rerun()
+                            else:
+                                st.error(msg)
+                    else:
+                        if st.button("Delete", key=f"del_{task_id}", use_container_width=True):
+                            st.session_state["delete_task_id"] = task_id
+                            st.session_state["delete_confirm"] = True
+                            st.rerun()
+
+                st.markdown('<div class="section-label" style="margin-top:12px;">Progress Notes</div>', unsafe_allow_html=True)
+                notes_df = load_notes_for_task(task_id)
+                if not notes_df.empty:
+                    for _, note in notes_df.head(5).iterrows():
+                        ts = note.get("CREATED_AT", "")
+                        by = note.get("CREATED_BY", "") or "System"
+                        txt = note.get("NOTE_TEXT", "")
+                        st.markdown(f"""
+                        <div class="note-card">
+                            <div class="note-meta">{by} -- {ts}</div>
+                            <div class="note-text">{txt}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    if len(notes_df) > 5:
+                        st.caption(f"Showing 5 of {len(notes_df)} notes.")
+                else:
+                    st.caption("No notes yet.")
+
+                note_text = st.text_input("Add a note", placeholder="Type your update...", key=f"note_{task_id}")
+                note_by = st.text_input("Your name", placeholder="Who is adding this note?", key=f"noteby_{task_id}")
+                if st.button("Add Note", key=f"addnote_{task_id}"):
+                    if note_text and note_text.strip():
+                        ok, msg = insert_note(task_id, note_text.strip(), note_by.strip() if note_by else None)
+                        if ok:
+                            st.session_state["success_message"] = f"Note added to '{title}'."
+                            st.rerun()
+                        else:
+                            st.error(msg)
+                    else:
+                        st.warning("Please enter a note.")
+
+        if total_pages > 1:
+            p1, p2, p3 = st.columns([1, 2, 1])
+            with p1:
+                if st.button("Previous", disabled=(page == 0), key="prev_page"):
+                    st.session_state["task_page"] = max(0, page - 1)
+                    st.rerun()
+            with p3:
+                if st.button("Next", disabled=(page >= total_pages - 1), key="next_page"):
+                    st.session_state["task_page"] = min(total_pages - 1, page + 1)
+                    st.rerun()
+
+    # ── Edit Task (inline, no dialog) ──
+    if st.session_state.get("edit_task_id"):
+        edit_id = st.session_state["edit_task_id"]
+        try:
+            edit_row = session.sql(f"SELECT * FROM {TBL_TASKS} WHERE TASK_ID = {int(edit_id)}").to_pandas()
+            if not edit_row.empty:
+                er = edit_row.iloc[0]
+                st.markdown("---")
+                st.markdown(f'<div class="section-label">Editing Task #{edit_id}</div>', unsafe_allow_html=True)
+                ec1, ec2 = st.columns(2)
+                with ec1:
+                    ed_title = st.text_input("Task Title *", value=str(er.get("TASK_TITLE", "")), key="ed_title")
+                    ed_reason = st.text_area("Business Reason", value=str(er.get("BUSINESS_REASON", "") or ""), height=80, key="ed_reason")
+                    ed_platform = st.text_input("Platform / Area", value=str(er.get("PLATFORM_AREA", "") or ""), key="ed_platform")
+                    cur_owner = str(er.get("OWNER", ""))
+                    owner_opts = active_members if cur_owner in active_members else [cur_owner] + active_members
+                    ed_owner = st.selectbox("Owner *", options=owner_opts, index=0 if cur_owner in owner_opts else 0, key="ed_owner")
+                    cur_rev = str(er.get("REVIEWER", "") or "")
+                    rev_opts = [""] + active_members if cur_rev in active_members or cur_rev == "" else [cur_rev] + [""] + active_members
+                    ed_reviewer = st.selectbox("Reviewer", options=rev_opts, format_func=lambda x: "No reviewer" if x == "" else x, key="ed_reviewer")
+                with ec2:
+                    sd_val = er.get("START_DATE")
+                    if sd_val and not isinstance(sd_val, date):
+                        try:
+                            sd_val = pd.to_datetime(sd_val).date()
+                        except Exception:
+                            sd_val = date.today()
+                    ed_start = st.date_input("Start Date *", value=sd_val or date.today(), key="ed_start")
+
+                    ed_val = er.get("END_DATE")
+                    if ed_val and not isinstance(ed_val, date):
+                        try:
+                            ed_val = pd.to_datetime(ed_val).date()
+                        except Exception:
+                            ed_val = None
+                    ed_end = st.date_input("End Date", value=ed_val, key="ed_end")
+
+                    cur_status = str(er.get("STATUS", "Queued"))
+                    ed_status = st.selectbox("Status", STATUS_OPTIONS, index=STATUS_OPTIONS.index(cur_status) if cur_status in STATUS_OPTIONS else 0, key="ed_status")
+                    ed_effort = st.number_input("Effort (Days)", min_value=0.0, value=float(er.get("EFFORT_DAYS", 0) or 0), step=0.5, format="%.1f", key="ed_effort")
+                    ed_pct = st.number_input("Completion %", min_value=0.0, max_value=100.0, value=float(er.get("COMPLETION_PCT", 0) or 0), step=5.0, format="%.0f", key="ed_pct")
+                    ed_jira = st.text_input("JIRA / Reference", value=str(er.get("JIRA_REFERENCE", "") or ""), key="ed_jira")
+
+                dc1, dc2 = st.columns(2)
+                with dc1:
+                    if st.button("Update Task", type="primary", use_container_width=True, key="ed_save"):
+                        errs = validate_task(ed_title, ed_owner, ed_start, ed_end, ed_status, ed_effort, ed_pct)
+                        if errs:
+                            for e in errs:
+                                st.error(e)
+                        else:
+                            ok, msg = update_task(edit_id, ed_title, ed_reason, ed_platform, ed_owner,
+                                                  ed_reviewer if ed_reviewer else None,
+                                                  ed_start, ed_end, ed_status, ed_effort, ed_pct, ed_jira)
+                            if ok:
+                                st.session_state["edit_task_id"] = None
+                                st.session_state["success_message"] = "Task updated successfully."
+                                st.rerun()
+                            else:
+                                st.error(msg)
+                with dc2:
+                    if st.button("Cancel", use_container_width=True, key="ed_cancel"):
+                        st.session_state["edit_task_id"] = None
+                        st.rerun()
+            else:
+                st.session_state["edit_task_id"] = None
+        except Exception as e:
+            st.error(f"Error loading task for editing: {e}")
+            st.session_state["edit_task_id"] = None
+
+
+# ═══════════════════════════════════════════════════════════════
+# TAB 2: TEAM OVERVIEW
+# ═══════════════════════════════════════════════════════════════
+with tab2:
+    st.markdown('<div class="section-label">Filters</div>', unsafe_allow_html=True)
+
+    oc1, oc2, oc3, oc4 = st.columns(4)
+    with oc1:
+        ov_owners = ["All"] + get_distinct_owners()
+        ov_owner = st.selectbox("Owner", ov_owners, key="ov_owner")
+    with oc2:
+        ov_status = st.selectbox("Status", ["All"] + STATUS_OPTIONS, key="ov_status")
+    with oc3:
+        ov_platforms = ["All"] + get_distinct_platforms()
+        ov_platform = st.selectbox("Platform / Area", ov_platforms, key="ov_platform")
+    with oc4:
+        ov_date_range = st.date_input("Start Date Range", value=[], key="ov_dates")
+
+    start_from = None
+    start_to = None
+    if ov_date_range and len(ov_date_range) == 2:
+        start_from, start_to = ov_date_range
+
+    ov_df = load_tasks(
+        status_filter=ov_status if ov_status != "All" else None,
+        owner_filter=ov_owner if ov_owner != "All" else None,
+        platform_filter=ov_platform if ov_platform != "All" else None,
+        start_from=start_from,
+        start_to=start_to,
+    )
+
+    st.markdown('<div class="section-label" style="margin-top:16px;">Summary</div>', unsafe_allow_html=True)
+
+    all_tasks = load_tasks()
+    total_tasks = len(all_tasks) if not all_tasks.empty else 0
+    in_progress = len(all_tasks[all_tasks["STATUS"] == "In Progress"]) if not all_tasks.empty else 0
+    on_hold = len(all_tasks[all_tasks["STATUS"] == "On Hold"]) if not all_tasks.empty else 0
+    queued = len(all_tasks[all_tasks["STATUS"] == "Queued"]) if not all_tasks.empty else 0
+    closed = len(all_tasks[all_tasks["STATUS"] == "Closed"]) if not all_tasks.empty else 0
+    total_effort = all_tasks["EFFORT_DAYS"].sum() if not all_tasks.empty and "EFFORT_DAYS" in all_tasks.columns else 0
+
+    mc1, mc2, mc3, mc4, mc5, mc6 = st.columns(6)
+    with mc1:
+        st.markdown(_metric_card(total_tasks, "Total Tasks", "blue"), unsafe_allow_html=True)
+    with mc2:
+        st.markdown(_metric_card(in_progress, "In Progress", "teal"), unsafe_allow_html=True)
+    with mc3:
+        st.markdown(_metric_card(queued, "Queued", "purple"), unsafe_allow_html=True)
+    with mc4:
+        st.markdown(_metric_card(on_hold, "On Hold", "amber"), unsafe_allow_html=True)
+    with mc5:
+        st.markdown(_metric_card(closed, "Closed", "green"), unsafe_allow_html=True)
+    with mc6:
+        st.markdown(_metric_card(f"{float(total_effort):.1f}", "Total Effort (Days)", "red"), unsafe_allow_html=True)
+
+    st.markdown('<div class="section-label" style="margin-top:16px;">Tasks</div>', unsafe_allow_html=True)
+
+    if ov_df.empty:
+        st.info("No tasks match the selected filters.")
+    else:
+        display_df = ov_df.copy()
+
+        def _flag_long(row):
+            if row.get("STATUS") == "Closed":
+                return ""
+            try:
+                sd = pd.to_datetime(row.get("START_DATE")).date() if not isinstance(row.get("START_DATE"), date) else row.get("START_DATE")
+                return "30+ days" if (date.today() - sd).days > 30 else ""
+            except Exception:
+                return ""
+
+        display_df["FLAG"] = display_df.apply(_flag_long, axis=1)
+
+        show_cols = ["TASK_ID", "TASK_TITLE", "OWNER", "REVIEWER", "PLATFORM_AREA", "STATUS",
+                     "START_DATE", "END_DATE", "EFFORT_DAYS", "COMPLETION_PCT", "FLAG"]
+        available_cols = [c for c in show_cols if c in display_df.columns]
+        show_df = display_df[available_cols].copy()
+        show_df.columns = [c.replace("_", " ").title() for c in show_df.columns]
+
+        st.dataframe(show_df, use_container_width=True, hide_index=True, height=500)
+
+    if not all_tasks.empty and "OWNER" in all_tasks.columns and "EFFORT_DAYS" in all_tasks.columns:
+        st.markdown('<div class="section-label" style="margin-top:16px;">Effort by Owner</div>', unsafe_allow_html=True)
+        effort_by_owner = all_tasks.groupby("OWNER")["EFFORT_DAYS"].sum().reset_index()
+        effort_by_owner.columns = ["Owner", "Total Effort (Days)"]
+        effort_by_owner = effort_by_owner.sort_values("Total Effort (Days)", ascending=False)
+        st.dataframe(effort_by_owner, use_container_width=True, hide_index=True)
+
+    if not all_tasks.empty:
+        st.markdown('<div class="section-label" style="margin-top:16px;">Stale Tasks (No update in 14+ days)</div>', unsafe_allow_html=True)
+        try:
+            stale = all_tasks[all_tasks["STATUS"].isin(["In Progress", "Queued", "On Hold"])].copy()
+            if "UPDATED_AT" in stale.columns:
+                stale["UPDATED_AT"] = pd.to_datetime(stale["UPDATED_AT"])
+                cutoff = datetime.now() - timedelta(days=14)
+                stale = stale[stale["UPDATED_AT"] < cutoff]
+            if stale.empty:
+                st.info("All open tasks have been updated recently.")
+            else:
+                stale_show = stale[["TASK_ID", "TASK_TITLE", "OWNER", "STATUS", "UPDATED_AT"]].copy()
+                stale_show.columns = ["ID", "Title", "Owner", "Status", "Last Updated"]
+                st.dataframe(stale_show, use_container_width=True, hide_index=True)
+        except Exception:
+            st.info("Unable to determine stale tasks.")
+
+
+# ═══════════════════════════════════════════════════════════════
+# TAB 3: TEAM MANAGEMENT
+# ═══════════════════════════════════════════════════════════════
+with tab3:
+    members_df = load_all_members()
+
+    st.markdown('<div class="section-label">Add Team Member</div>', unsafe_allow_html=True)
+
+    with st.form("add_member_form", clear_on_submit=True):
+        mc1, mc2 = st.columns(2)
+        with mc1:
+            m_name = st.text_input("Name *", placeholder="Full name")
+            m_role = st.selectbox("Role", ROLE_OPTIONS)
+            m_active = st.selectbox("Status", ACTIVE_OPTIONS)
+        with mc2:
+            current_members = active_members
+            m_reviewer = st.selectbox("Default Reviewer", options=[""] + current_members, format_func=lambda x: "None" if x == "" else x)
+            m_notes = st.text_area("Notes", placeholder="Optional notes about this member", height=80)
+
+        m_submit = st.form_submit_button("Add Member", type="primary", use_container_width=True)
+        if m_submit:
+            if not m_name or not m_name.strip():
+                st.error("Name is required.")
+            else:
+                ok, msg = insert_member(m_name.strip(), m_role, m_active,
+                                        m_reviewer if m_reviewer else None,
+                                        m_notes.strip() if m_notes else None)
+                if ok:
+                    st.session_state["success_message"] = msg
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+    st.markdown("---")
+    st.markdown('<div class="section-label">Team Members</div>', unsafe_allow_html=True)
+
+    if members_df.empty:
+        st.info("No team members yet. Add your first member above.")
+    else:
+        for _, mrow in members_df.iterrows():
+            mid = int(mrow["MEMBER_ID"])
+            mname = mrow.get("NAME", "")
+            mrole = mrow.get("ROLE", "")
+            mactive = mrow.get("ACTIVE_STATUS", "Active")
+            mreviewer = mrow.get("DEFAULT_REVIEWER", "") or ""
+            mnotes = mrow.get("NOTES", "") or ""
+
+            active_label = "[Active]" if mactive == "Active" else "[Inactive]"
+            with st.expander(f"{active_label} **{mname}** -- {mrole}", expanded=False):
+                st.markdown(f"""
+                <div class="task-detail">
+                    <div class="task-detail-item"><strong>Role:</strong> {mrole}</div>
+                    <div class="task-detail-item"><strong>Status:</strong> {mactive}</div>
+                    <div class="task-detail-item"><strong>Default Reviewer:</strong> {mreviewer or '--'}</div>
+                    <div class="task-detail-item"><strong>Notes:</strong> {mnotes or '--'}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                st.markdown('<div class="section-label" style="margin-top:12px;">Edit Member</div>', unsafe_allow_html=True)
+                emc1, emc2 = st.columns(2)
+                with emc1:
+                    em_name = st.text_input("Name", value=mname, key=f"emn_{mid}")
+                    em_role = st.selectbox("Role", ROLE_OPTIONS, index=ROLE_OPTIONS.index(mrole) if mrole in ROLE_OPTIONS else 0, key=f"emr_{mid}")
+                with emc2:
+                    em_active = st.selectbox("Status", ACTIVE_OPTIONS, index=ACTIVE_OPTIONS.index(mactive) if mactive in ACTIVE_OPTIONS else 0, key=f"ema_{mid}")
+                    em_rev_opts = [""] + [m for m in active_members if m != em_name]
+                    em_reviewer = st.selectbox("Default Reviewer", options=em_rev_opts, index=em_rev_opts.index(mreviewer) if mreviewer in em_rev_opts else 0, format_func=lambda x: "None" if x == "" else x, key=f"emrev_{mid}")
+                em_notes = st.text_area("Notes", value=mnotes, key=f"emnote_{mid}", height=60)
+
+                eb1, eb2 = st.columns(2)
+                with eb1:
+                    if st.button("Save Changes", key=f"msave_{mid}", use_container_width=True):
+                        if not em_name or not em_name.strip():
+                            st.error("Name is required.")
+                        else:
+                            ok, msg = update_member(mid, em_name.strip(), em_role, em_active,
+                                                    em_reviewer if em_reviewer else None,
+                                                    em_notes.strip() if em_notes else None)
+                            if ok:
+                                st.session_state["success_message"] = msg
+                                st.rerun()
+                            else:
+                                st.error(msg)
+                with eb2:
+                    if st.session_state.get("delete_member_id") == mid and st.session_state.get("delete_member_confirm"):
+                        if st.button("Confirm Delete", key=f"cmdel_{mid}", type="primary", use_container_width=True):
+                            ok, msg = delete_member(mid, mname)
+                            st.session_state["delete_member_id"] = None
+                            st.session_state["delete_member_confirm"] = False
+                            if ok:
+                                st.session_state["success_message"] = msg
+                                st.rerun()
+                            else:
+                                st.error(msg)
+                    else:
+                        if st.button("Delete", key=f"mdel_{mid}", use_container_width=True):
+                            st.session_state["delete_member_id"] = mid
+                            st.session_state["delete_member_confirm"] = True
+                            st.rerun()
+
+
+# ===============================================================
+# TAB 4: DATA IMPORT
+# ===============================================================
+with tab4:
+    st.markdown('<div class="section-label">Import Data from CSV / Excel</div>', unsafe_allow_html=True)
+    st.markdown("Upload a file, map its columns to the task fields, preview, and bulk-insert into Snowflake. This is designed as a one-time migration tool.")
+
+    TASK_FIELDS = {
+        "-- Skip --": None,
+        "Task Title *": "TASK_TITLE",
+        "Business Reason": "BUSINESS_REASON",
+        "Platform / Area": "PLATFORM_AREA",
+        "Owner *": "OWNER",
+        "Reviewer": "REVIEWER",
+        "Start Date *": "START_DATE",
+        "End Date": "END_DATE",
+        "Status": "STATUS",
+        "Effort (Days)": "EFFORT_DAYS",
+        "Completion %": "COMPLETION_PCT",
+        "JIRA / Reference": "JIRA_REFERENCE",
+        "Comments / Notes": "PROGRESS_NOTE",
+    }
+
+    uploaded_file = st.file_uploader("Upload CSV or Excel file", type=["csv", "xlsx", "xls"], key="import_file")
+
+    if uploaded_file is not None:
+        # Read the file
+        try:
+            if uploaded_file.name.endswith(".csv"):
+                raw_df = pd.read_csv(uploaded_file)
+            else:
+                raw_df = pd.read_excel(uploaded_file)
+
+            st.markdown(f'<div class="section-label" style="margin-top:16px;">File Preview ({len(raw_df)} rows, {len(raw_df.columns)} columns)</div>', unsafe_allow_html=True)
+            st.dataframe(raw_df.head(10), use_container_width=True, hide_index=True)
+
+            file_columns = ["-- Skip --"] + list(raw_df.columns)
+
+            # Column mapping
+            st.markdown('<div class="section-label" style="margin-top:16px;">Column Mapping</div>', unsafe_allow_html=True)
+            st.markdown("Map each task field to a column from your file. Fields marked * are required.")
+
+            mapping = {}
+            mc1, mc2 = st.columns(2)
+
+            field_list = list(TASK_FIELDS.keys())
+            half = len(field_list) // 2
+
+            with mc1:
+                for field_label in field_list[:half]:
+                    if field_label == "-- Skip --":
+                        continue
+                    mapping[field_label] = st.selectbox(
+                        field_label,
+                        options=file_columns,
+                        index=0,
+                        key=f"map_{field_label}"
+                    )
+
+            with mc2:
+                for field_label in field_list[half:]:
+                    if field_label == "-- Skip --":
+                        continue
+                    mapping[field_label] = st.selectbox(
+                        field_label,
+                        options=file_columns,
+                        index=0,
+                        key=f"map_{field_label}"
+                    )
+
+            # Default status for unmapped status column
+            st.markdown('<div class="section-label" style="margin-top:16px;">Default Values</div>', unsafe_allow_html=True)
+            default_status = st.selectbox("Default Status (for rows without a status)", STATUS_OPTIONS, index=0, key="import_default_status")
+            default_owner = st.selectbox("Default Owner (for rows without an owner)", options=[""] + load_active_members(), format_func=lambda x: "-- Leave blank --" if x == "" else x, key="import_default_owner")
+
+            # Preview mapped data
+            if st.button("Preview Mapped Data", key="preview_mapped", use_container_width=True):
+                preview_rows = []
+                errors_found = 0
+
+                for idx, row in raw_df.iterrows():
+                    mapped_row = {}
+                    for field_label, file_col in mapping.items():
+                        db_col = TASK_FIELDS.get(field_label)
+                        if db_col is None:
+                            continue
+                        if file_col == "-- Skip --":
+                            mapped_row[db_col] = None
+                        else:
+                            val = row.get(file_col)
+                            if pd.isna(val):
+                                mapped_row[db_col] = None
+                            else:
+                                mapped_row[db_col] = str(val).strip()
+
+                    # Apply defaults
+                    if not mapped_row.get("STATUS"):
+                        mapped_row["STATUS"] = default_status
+                    if not mapped_row.get("OWNER") and default_owner:
+                        mapped_row["OWNER"] = default_owner
+
+                    # Validate required fields
+                    row_errors = []
+                    if not mapped_row.get("TASK_TITLE"):
+                        row_errors.append("Missing Title")
+                        errors_found += 1
+                    if not mapped_row.get("OWNER"):
+                        row_errors.append("Missing Owner")
+                        errors_found += 1
+
+                    mapped_row["_ROW"] = idx + 1
+                    mapped_row["_ERRORS"] = ", ".join(row_errors) if row_errors else ""
+                    preview_rows.append(mapped_row)
+
+                preview_df = pd.DataFrame(preview_rows)
+                st.session_state["import_preview"] = preview_df
+                st.session_state["import_errors"] = errors_found
+
+            # Show preview if available
+            if st.session_state.get("import_preview") is not None:
+                preview_df = st.session_state["import_preview"]
+                errors_found = st.session_state.get("import_errors", 0)
+
+                st.markdown(f'<div class="section-label" style="margin-top:16px;">Mapped Preview ({len(preview_df)} rows)</div>', unsafe_allow_html=True)
+
+                if errors_found > 0:
+                    st.markdown(f'<div class="warning-box">{errors_found} validation error(s) found. Rows with errors will be skipped during import. Check the ERRORS column below.</div>', unsafe_allow_html=True)
+
+                display_cols = ["_ROW", "TASK_TITLE", "OWNER", "REVIEWER", "PLATFORM_AREA", "STATUS",
+                               "START_DATE", "END_DATE", "EFFORT_DAYS", "COMPLETION_PCT", "JIRA_REFERENCE", "PROGRESS_NOTE", "_ERRORS"]
+                available = [c for c in display_cols if c in preview_df.columns]
+                st.dataframe(preview_df[available].head(20), use_container_width=True, hide_index=True)
+
+                if len(preview_df) > 20:
+                    st.caption(f"Showing first 20 of {len(preview_df)} rows.")
+
+                # Import button
+                valid_rows = preview_df[preview_df["_ERRORS"] == ""]
+                st.markdown(f"**{len(valid_rows)}** rows ready to import, **{len(preview_df) - len(valid_rows)}** will be skipped.")
+
+                if len(valid_rows) > 0:
+                    if st.button("Import Data to Snowflake", type="primary", use_container_width=True, key="do_import"):
+                        success_count = 0
+                        fail_count = 0
+                        fail_messages = []
+
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+
+                        for i, (_, row) in enumerate(valid_rows.iterrows()):
+                            try:
+                                title = row.get("TASK_TITLE", "")
+                                reason = row.get("BUSINESS_REASON") if pd.notna(row.get("BUSINESS_REASON")) else None
+                                platform = row.get("PLATFORM_AREA") if pd.notna(row.get("PLATFORM_AREA")) else None
+                                owner = row.get("OWNER", "")
+                                reviewer = row.get("REVIEWER") if pd.notna(row.get("REVIEWER")) else None
+                                status = row.get("STATUS", "Queued")
+                                jira = row.get("JIRA_REFERENCE") if pd.notna(row.get("JIRA_REFERENCE")) else None
+
+                                # Parse dates
+                                start_dt = None
+                                if row.get("START_DATE") and pd.notna(row.get("START_DATE")):
+                                    try:
+                                        start_dt = pd.to_datetime(row["START_DATE"]).date()
+                                    except Exception:
+                                        start_dt = date.today()
+                                else:
+                                    start_dt = date.today()
+
+                                end_dt = None
+                                if row.get("END_DATE") and pd.notna(row.get("END_DATE")):
+                                    try:
+                                        end_dt = pd.to_datetime(row["END_DATE"]).date()
+                                    except Exception:
+                                        end_dt = None
+
+                                # Parse numbers
+                                effort = 0.0
+                                if row.get("EFFORT_DAYS") and pd.notna(row.get("EFFORT_DAYS")):
+                                    try:
+                                        effort = float(row["EFFORT_DAYS"])
+                                    except Exception:
+                                        effort = 0.0
+
+                                pct = 0.0
+                                if row.get("COMPLETION_PCT") and pd.notna(row.get("COMPLETION_PCT")):
+                                    try:
+                                        pct = float(row["COMPLETION_PCT"])
+                                        if pct > 1 and pct <= 100:
+                                            pass  # already percentage
+                                        elif pct <= 1:
+                                            pct = pct * 100  # convert decimal to %
+                                    except Exception:
+                                        pct = 0.0
+
+                                # Validate status
+                                if status not in STATUS_OPTIONS:
+                                    status = default_status
+
+                                ok, msg = insert_task(title, reason, platform, owner, reviewer,
+                                                      start_dt, end_dt, status, effort, pct, jira)
+                                if ok:
+                                    success_count += 1
+                                    # Insert progress note if comments/notes column was mapped
+                                    note_text = row.get("PROGRESS_NOTE")
+                                    if note_text and pd.notna(note_text) and str(note_text).strip():
+                                        try:
+                                            # Get the task ID of the just-inserted task
+                                            last_task = session.sql(f"SELECT MAX(TASK_ID) AS TID FROM {TBL_TASKS} WHERE TASK_TITLE = '{_safe_sql(title)}' AND OWNER = '{_safe_sql(owner)}'").to_pandas()
+                                            if not last_task.empty and last_task["TID"].iloc[0]:
+                                                new_task_id = int(last_task["TID"].iloc[0])
+                                                insert_note(new_task_id, str(note_text).strip(), "Imported")
+                                        except Exception:
+                                            pass  # note insert failure is non-critical
+                                else:
+                                    fail_count += 1
+                                    fail_messages.append(f"Row {int(row.get('_ROW', i+1))}: {msg}")
+
+                            except Exception as e:
+                                fail_count += 1
+                                fail_messages.append(f"Row {int(row.get('_ROW', i+1))}: {str(e)}")
+
+                            progress_bar.progress((i + 1) / len(valid_rows))
+                            status_text.text(f"Processing row {i+1} of {len(valid_rows)}...")
+
+                        status_text.empty()
+                        progress_bar.empty()
+
+                        # Results
+                        if success_count > 0:
+                            st.markdown(f'<div class="success-box">Successfully imported {success_count} task(s) into Snowflake.</div>', unsafe_allow_html=True)
+                        if fail_count > 0:
+                            st.error(f"{fail_count} row(s) failed to import:")
+                            for fm in fail_messages[:10]:
+                                st.caption(fm)
+                            if len(fail_messages) > 10:
+                                st.caption(f"...and {len(fail_messages) - 10} more.")
+
+                        # Clear preview
+                        st.session_state["import_preview"] = None
+                        st.session_state["import_errors"] = 0
+                else:
+                    st.warning("No valid rows to import. Fix the errors in your file and try again.")
+
+        except Exception as e:
+            st.error(f"Error reading file: {e}")
