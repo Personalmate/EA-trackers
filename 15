@@ -1,0 +1,88 @@
+You are Claude Code. You will refine an existing Streamlit in Snowflake (SiS) app named “Team Effort Tracker”.
+
+CONSTRAINTS (MUST FOLLOW)
+- Do not hallucinate. Ask questions if something is unclear.
+- Keep the app as a single Streamlit file and maintain the existing dark theme CSS approach.
+- The app runs in Streamlit in Snowflake (SiS): no external URLs, no Google Fonts, no st.dialog, no emojis/page_icon.
+- All Snowflake access must use Snowpark get_active_session().
+- Continue current error handling style (try/except around Snowflake operations with st.error()).
+- Assume schema is DB_CORE_PRD.BACKUP_OPS.
+- Existing tables in use:
+  - DB_CORE_PRD.BACKUP_OPS.TASKS
+  - DB_CORE_PRD.BACKUP_OPS.PROGRESS_NOTES
+  - TEAM_MEMBERS exists but not required for this change.
+
+GOAL
+Add a “WIPE ALL DATA” (full reset) feature to the app that deletes ALL rows from TASKS and PROGRESS_NOTES before reloading a cleaned file. The user explicitly wants 3 confirmation messages with warnings.
+
+WHERE TO ADD IT
+Add this to Tab 3: DATA IMPORT (the migration / import tab), near the top or in a dedicated section called “Danger Zone” or “Reset”.
+
+WHAT “WIPE ALL DATA” MUST DO
+- Must delete ALL records from:
+  1) DB_CORE_PRD.BACKUP_OPS.PROGRESS_NOTES
+  2) DB_CORE_PRD.BACKUP_OPS.TASKS
+- Must delete notes first, then tasks (because of FK relationship / dependency).
+- Use TRUNCATE where possible for speed, otherwise DELETE.
+- Must show success message that includes the final row counts (should be 0 and 0).
+- Must not delete TEAM_MEMBERS (explicitly do NOT touch TEAM_MEMBERS).
+
+THREE CONFIRMATIONS (REQUIRED UX)
+Implement a strict 3-step confirmation flow with clear warnings. You cannot use st.dialog, so implement via Streamlit widgets and session_state.
+
+Step 1: Warning acknowledgement
+- Show a strong warning banner explaining:
+  - This will permanently delete all tasks and progress notes.
+  - It cannot be undone (unless there is a separate backup outside the app).
+  - It will affect all users.
+- Provide a checkbox like:
+  “I understand this will permanently delete all tasks and notes.”
+
+Step 2: Second confirmation (explicit)
+- Only after step 1 is checked, show a second checkbox:
+  “Yes, I want to wipe ALL data from TASKS and PROGRESS_NOTES.”
+
+Step 3: Typed phrase confirmation
+- Only after step 2 is checked, require a text input where the user must type EXACTLY:
+  WIPE ALL
+  (Case-sensitive or case-insensitive is OK, but enforce a strict match and explain it.)
+- Show a final warning message right above the button:
+  “Last chance: this cannot be undone.”
+
+Final action button
+- Only enable the final “WIPE NOW” button when steps 1 & 2 are checked AND the typed phrase matches.
+- Clicking “WIPE NOW” triggers the actual TRUNCATE/DELETE.
+- Add a spinner during operation.
+- After wipe completes:
+  - Reset the confirmation widgets in session_state (so user can’t accidentally run twice).
+  - Show success + counts.
+
+EXTRA SAFETY REQUIREMENTS
+- Require the user to also click a final “Confirm wipe” button or have a two-click action:
+  Option A: “WIPE NOW” button does it directly (acceptable if the above 3 confirmations exist).
+  Option B: A two-step button: “Prepare wipe” then “Execute wipe” (only if simple).
+- Prevent accidental repeat: after a wipe, disable the button for the remainder of the session unless user re-enters confirmations.
+
+TECHNICAL IMPLEMENTATION REQUIREMENTS
+- Use get_active_session() from snowflake.snowpark.context.
+- Wrap DB operations in try/except and show st.error with exception details.
+- Perform operations in correct order:
+  1) TRUNCATE PROGRESS_NOTES
+  2) TRUNCATE TASKS
+- After wipe, run COUNT(*) on both tables and display results.
+- Ensure the UI is responsive and does not crash if tables are already empty.
+
+INTEGRATION WITH IMPORT FLOW
+- After wipe completes successfully, show a clear next step:
+  “Now upload the cleaned file below to reload.”
+- If the user tries to import without wiping (optional rule), do not block; just warn if they are about to duplicate data.
+- (Optional) Provide a checkbox “I already wiped data” which if unchecked shows a warning above the import button.
+
+DELIVERABLES
+1) Updated Streamlit app code implementing the wipe feature with the 3-step confirmation flow.
+2) Brief notes in comments explaining the safety logic and why deletion order matters.
+
+BEFORE YOU START
+Ask me only if necessary:
+- Confirm if TRUNCATE is permitted in this environment. If not permitted, fall back to DELETE FROM in correct order.
+Otherwise proceed with TRUNCATE first and fallback to DELETE if TRUNCATE fails.
