@@ -1,0 +1,467 @@
+import re
+import html as _html
+import pandas as pd
+from datetime import date, datetime, timedelta
+from snowflake.snowpark.context import get_active_session
+import streamlit as st
+
+
+def _esc(val):
+    """Escape HTML entities in user-supplied text to prevent XSS."""
+    if val is None:
+        return ""
+    return _html.escape(str(val))
+
+st.set_page_config(layout="wide")
+
+st.markdown("""
+<style>
+* { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+
+html, body, [data-testid="stApp"], [data-testid="stAppViewContainer"],
+[data-testid="stHeader"], [data-testid="stMain"],
+[data-testid="stMainBlockContainer"], [data-testid="stVerticalBlock"],
+[data-testid="stHorizontalBlock"], [data-testid="stForm"],
+[data-testid="stBottomBlockContainer"], .main, .block-container,
+section[data-testid="stSidebar"], [data-testid="stSidebarContent"] {
+    background-color: #0e1117 !important; color: #fafafa !important;
+}
+[data-testid="stSidebar"] { background-color: #161b22 !important; }
+
+p, span, label, div, li, ul, ol, h1, h2, h3, h4, h5, h6, a,
+strong, em, b, i, small, td, th, caption, figcaption,
+[data-testid="stMarkdown"], [data-testid="stMarkdown"] p,
+[data-testid="stMarkdown"] span, [data-testid="stMarkdown"] li,
+[data-testid="stMarkdown"] strong, [data-testid="stMarkdown"] em,
+[data-testid="stMarkdown"] h1, [data-testid="stMarkdown"] h2,
+[data-testid="stMarkdown"] h3, [data-testid="stMarkdown"] h4,
+[data-testid="stText"], [data-testid="stCaptionContainer"],
+[data-testid="stCaptionContainer"] *, [class*="Caption"] {
+    color: #fafafa !important;
+}
+
+[data-testid="stTextInput"] label, [data-testid="stTextInput"] label p,
+[data-testid="stTextArea"] label, [data-testid="stTextArea"] label p,
+[data-testid="stSelectbox"] label, [data-testid="stSelectbox"] label p,
+[data-testid="stMultiSelect"] label, [data-testid="stMultiSelect"] label p,
+[data-testid="stNumberInput"] label, [data-testid="stNumberInput"] label p,
+[data-testid="stDateInput"] label, [data-testid="stDateInput"] label p,
+[data-testid="stCheckbox"] label, [data-testid="stCheckbox"] label p,
+[data-testid="stRadio"] label, [data-testid="stRadio"] label p,
+[data-testid="stSlider"] label, [data-testid="stSlider"] label p,
+[data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] p,
+[data-testid="stWidgetLabel"] span {
+    color: #fafafa !important;
+}
+
+[data-testid="stSelectbox"] > div > div,
+[data-baseweb="select"] > div,
+textarea, input,
+[data-testid="stTextArea"] textarea, [data-testid="stTextArea"] > div,
+[data-testid="stTextInput"] > div > div, [data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input, [data-testid="stDateInput"] input {
+    background-color: #1c2030 !important; color: #fafafa !important;
+    border-color: #3a3f52 !important; border-radius: 6px !important;
+}
+input::placeholder, textarea::placeholder { color: #6b7280 !important; }
+input:focus, textarea:focus { border-color: #3b82f6 !important; box-shadow: 0 0 0 1px #3b82f6 !important; }
+input:disabled, textarea:disabled { background-color: #12151c !important; color: #8b95a5 !important; border-color: #2a3040 !important; }
+
+[data-baseweb="popover"], [data-baseweb="popover"] > div,
+[data-baseweb="menu"], [data-baseweb="menu"] li,
+ul[role="listbox"], ul[role="listbox"] li,
+[role="option"] {
+    background-color: #1c2030 !important; color: #fafafa !important;
+}
+[data-baseweb="menu"] li:hover, ul[role="listbox"] li:hover,
+[role="option"]:hover { background-color: #2a3040 !important; }
+[data-baseweb="select"] svg { fill: #fafafa !important; }
+[data-baseweb="select"] [data-testid="stMarkdown"],
+[data-baseweb="select"] span,
+[data-baseweb="select"] div[class*="value"] { color: #fafafa !important; }
+
+[data-testid="stTabs"] button {
+    background-color: transparent !important; color: #8b95a5 !important;
+    font-weight: 600 !important; font-size: 16px !important;
+    letter-spacing: 0.3px !important; padding: 12px 24px !important;
+    text-transform: uppercase !important;
+}
+[data-testid="stTabs"] button[aria-selected="true"] { color: #fafafa !important; border-bottom: 3px solid #3b82f6 !important; }
+[data-testid="stTabs"] button:hover { color: #c0c8d4 !important; }
+[data-testid="stTabs"], [data-testid="stTabs"] > div { background-color: #0e1117 !important; }
+
+button { background-color: #1c2030 !important; color: #fafafa !important; border-color: #3a3f52 !important; border-radius: 6px !important; font-weight: 500 !important; }
+button:hover { background-color: #2a3040 !important; border-color: #4a5068 !important; }
+[data-testid="baseButton-primary"] { background: linear-gradient(135deg, #3b82f6, #2563eb) !important; color: #ffffff !important; border: none !important; }
+[data-testid="baseButton-primary"]:hover { background: linear-gradient(135deg, #2563eb, #1d4ed8) !important; }
+[data-testid="stForm"] [data-testid="baseButton-primary"],
+[data-testid="stForm"] [data-testid="stFormSubmitButton"] button {
+    background: linear-gradient(135deg, #238636, #1a7f37) !important; color: #ffffff !important; border: none !important;
+    font-weight: 600 !important; font-size: 15px !important; padding: 10px 20px !important;
+}
+[data-testid="stForm"] [data-testid="baseButton-primary"]:hover,
+[data-testid="stForm"] [data-testid="stFormSubmitButton"] button:hover {
+    background: linear-gradient(135deg, #2ea043, #238636) !important;
+}
+
+[data-testid="stExpander"] { background-color: #161b22 !important; border: 1px solid #2a3040 !important; border-radius: 8px !important; margin-bottom: 8px !important; }
+[data-testid="stExpander"] summary { color: #fafafa !important; }
+[data-testid="stExpander"] summary:hover { color: #3b82f6 !important; }
+[data-testid="stExpander"] > div, [data-testid="stExpander"] details,
+[data-testid="stExpander"] details > div {
+    background-color: #161b22 !important; color: #fafafa !important;
+}
+[data-testid="stExpander"] p, [data-testid="stExpander"] span,
+[data-testid="stExpander"] label, [data-testid="stExpander"] strong {
+    color: #fafafa !important;
+}
+
+[data-testid="stDataFrame"] { border-radius: 8px !important; overflow: hidden !important; }
+[data-testid="stDataFrame"] > div {
+    background-color: #161b22 !important; color: #fafafa !important;
+    --gdg-bg-cell: #161b22 !important; --gdg-bg-cell-medium: #161b22 !important;
+    --gdg-bg-header: #1c2030 !important; --gdg-bg-header-hovered: #2a3040 !important;
+    --gdg-text-dark: #fafafa !important; --gdg-text-medium: #c0c8d4 !important;
+    --gdg-text-light: #8b95a5 !important; --gdg-text-header: #8b95a5 !important;
+    --gdg-border-color: #2a3040 !important; --gdg-horizontal-border-color: #2a3040 !important;
+    --gdg-accent-color: #3b82f6 !important; --gdg-accent-fg: #ffffff !important;
+    --gdg-link-color: #3b82f6 !important;
+}
+
+[data-testid="stForm"] { background-color: #0e1117 !important; border-color: #2a3040 !important; }
+[data-testid="stForm"] > div { background-color: #0e1117 !important; }
+
+[data-testid="stAlert"], [role="alert"] { background-color: #161b22 !important; color: #fafafa !important; border-color: #2a3040 !important; }
+[data-testid="stAlert"] p, [role="alert"] p { color: #fafafa !important; }
+
+hr { border-color: #2a3040 !important; background-color: #2a3040 !important; }
+
+[data-testid="stColumn"], [data-testid="stColumn"] > div { background-color: transparent !important; }
+
+.header-container {
+    background: linear-gradient(135deg, #0f2744 0%, #1a3a5c 50%, #1e4976 100%);
+    border-radius: 12px; padding: 20px 24px; margin-bottom: 20px; text-align: center;
+    border: 1px solid #1e3a5f;
+}
+.header-title { font-size: 26px !important; font-weight: 700; color: white; margin: 0; letter-spacing: -0.3px; }
+.header-sub { font-size: 13px; color: #8bacc7; margin: 4px 0 0 0; }
+
+.metric-card {
+    background: #161b22; border: 1px solid #2a3040; border-radius: 10px;
+    padding: 16px 20px; text-align: center;
+}
+.metric-value { font-size: 28px; font-weight: 700; margin: 0; }
+.metric-label { font-size: 11px; color: #8b95a5 !important; margin: 6px 0 0 0; text-transform: uppercase; letter-spacing: 0.8px; font-weight: 500; }
+.mc-blue { border-left: 3px solid #3b82f6; } .mc-blue .metric-value { color: #3b82f6 !important; }
+.mc-green { border-left: 3px solid #22c55e; } .mc-green .metric-value { color: #22c55e !important; }
+.mc-amber { border-left: 3px solid #f59e0b; } .mc-amber .metric-value { color: #f59e0b !important; }
+.mc-red { border-left: 3px solid #ef4444; } .mc-red .metric-value { color: #ef4444 !important; }
+.mc-purple { border-left: 3px solid #a78bfa; } .mc-purple .metric-value { color: #a78bfa !important; }
+.mc-teal { border-left: 3px solid #14b8a6; } .mc-teal .metric-value { color: #14b8a6 !important; }
+
+.section-label {
+    font-size: 11px; font-weight: 600; color: #3b82f6 !important; text-transform: uppercase;
+    letter-spacing: 1px; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #2a3040;
+}
+
+.status-badge {
+    display: inline-block; padding: 3px 10px; border-radius: 12px;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.3px;
+}
+.status-queued { background: #1e293b; color: #94a3b8; }
+.status-inprogress { background: #172554; color: #60a5fa; }
+.status-onhold { background: #451a03; color: #fbbf24; }
+.status-closed { background: #052e16; color: #4ade80; }
+
+.note-card {
+    background: #1c2030; border-left: 3px solid #3b82f6; border-radius: 0 6px 6px 0;
+    padding: 10px 14px; margin-bottom: 8px;
+}
+.note-meta { font-size: 11px; color: #8b95a5 !important; margin-bottom: 4px; }
+.note-text { font-size: 13px; color: #e6edf3 !important; }
+
+.task-detail { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 6px; }
+.task-detail-item { font-size: 12px; color: #8b95a5; }
+.task-detail-item strong { color: #c0c8d4 !important; }
+
+.progress-bar-outer {
+    background: #1c2030; border-radius: 6px; height: 8px; width: 100%; overflow: hidden;
+}
+.progress-bar-inner { height: 100%; border-radius: 6px; transition: width 0.3s ease; }
+
+.page-info { color: #8b95a5 !important; font-size: 13px; text-align: center; padding: 8px 0; }
+
+.success-box {
+    background: #0d2818; border: 1px solid #238636; border-left: 4px solid #238636;
+    border-radius: 8px; padding: 14px 18px; font-size: 13px; color: #7ee787;
+}
+.warning-box {
+    background: #2d1b00; border: 1px solid #f59e0b; border-left: 4px solid #f59e0b;
+    border-radius: 8px; padding: 14px 18px; font-size: 13px; color: #fbbf24;
+}
+
+.long-running-flag {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; font-weight: 600; background: #451a03; color: #fbbf24;
+}
+
+.main .block-container { padding-top: 1rem; padding-bottom: 1rem; max-width: 100%; }
+
+.danger-zone {
+    background: #1a0000; border: 2px solid #7f1d1d; border-radius: 10px;
+    padding: 20px; margin-bottom: 16px;
+}
+.danger-zone-title {
+    font-size: 15px; font-weight: 700; color: #ef4444; margin: 0 0 8px 0;
+    padding-bottom: 8px; border-bottom: 1px solid #7f1d1d;
+}
+.danger-warning {
+    background: #2d0a0a; border: 1px solid #991b1b; border-left: 4px solid #ef4444;
+    border-radius: 8px; padding: 14px 18px; font-size: 13px; color: #fca5a5; margin-bottom: 12px;
+}
+.danger-warning strong { color: #ef4444 !important; }
+.wipe-success {
+    background: #0d2818; border: 1px solid #238636; border-left: 4px solid #22c55e;
+    border-radius: 8px; padding: 14px 18px; font-size: 13px; color: #7ee787; margin-bottom: 12px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+# ── Session State ──
+_defaults = {
+    "success_message": None,
+    "task_page": 0,
+    "edit_task_id": None,
+    "delete_task_id": None,
+    "delete_confirm": False,
+    "wipe_completed": False,
+}
+for _k, _v in _defaults.items():
+    if _k not in st.session_state:
+        st.session_state[_k] = _v
+
+
+# ── Snowpark Session ──
+try:
+    session = get_active_session()
+except Exception:
+    session = None
+
+
+# ── Constants ──
+SCHEMA = "DB_CORE_PRD.BACKUP_OPS"
+TBL_MEMBERS = f"{SCHEMA}.TEAM_MEMBERS"
+TBL_TASKS = f"{SCHEMA}.TASKS"
+TBL_NOTES = f"{SCHEMA}.PROGRESS_NOTES"
+
+STATUS_OPTIONS = ["Queued", "In Progress", "On Hold", "Closed"]
+RECORDS_PER_PAGE = 20
+
+
+def _safe_sql(val):
+    if val is None:
+        return ""
+    return str(val).replace("'", "''")
+
+
+def _status_badge(status):
+    cls_map = {"Queued": "status-queued", "In Progress": "status-inprogress", "On Hold": "status-onhold", "Closed": "status-closed"}
+    cls = cls_map.get(status, "status-queued")
+    return f'<span class="status-badge {cls}">{status}</span>'
+
+
+def _progress_bar_html(pct):
+    pct = max(0, min(100, float(pct or 0)))
+    if pct >= 100:
+        color = "#22c55e"
+    elif pct >= 60:
+        color = "#3b82f6"
+    elif pct >= 30:
+        color = "#f59e0b"
+    else:
+        color = "#ef4444"
+    return f'<div class="progress-bar-outer"><div class="progress-bar-inner" style="width:{pct}%;background:{color};"></div></div>'
+
+
+def _metric_card(value, label, color="blue"):
+    return f'<div class="metric-card mc-{color}"><p class="metric-value">{value}</p><p class="metric-label">{label}</p></div>'
+
+
+def _check_tables_exist():
+    if session is None:
+        return False, [TBL_TASKS, TBL_NOTES]
+    missing = []
+    for tbl in [TBL_TASKS, TBL_NOTES]:
+        try:
+            session.sql(f"SELECT 1 FROM {tbl} LIMIT 1").collect()
+        except Exception:
+            missing.append(tbl)
+    return len(missing) == 0, missing
+
+
+# ── Data Access ──
+def load_active_members():
+    try:
+        df = session.sql(f"SELECT NAME FROM {TBL_MEMBERS} WHERE ACTIVE_STATUS = 'Active' ORDER BY NAME").to_pandas()
+        return df["NAME"].tolist() if not df.empty else []
+    except Exception:
+        return []
+
+
+
+def load_tasks(status_filter=None, owner_filter=None, platform_filter=None,
+               start_from=None, start_to=None):
+    try:
+        where = []
+        if status_filter and status_filter != "All":
+            where.append(f"STATUS = '{_safe_sql(status_filter)}'")
+        if owner_filter and owner_filter != "All":
+            where.append(f"OWNER = '{_safe_sql(owner_filter)}'")
+        if platform_filter and platform_filter != "All":
+            where.append(f"PLATFORM_AREA = '{_safe_sql(platform_filter)}'")
+        if start_from:
+            where.append(f"START_DATE >= '{start_from}'")
+        if start_to:
+            where.append(f"START_DATE <= '{start_to}'")
+        sql = f"SELECT * FROM {TBL_TASKS}"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY CASE STATUS WHEN 'In Progress' THEN 1 WHEN 'Queued' THEN 2 WHEN 'On Hold' THEN 3 ELSE 4 END, UPDATED_AT DESC"
+        return session.sql(sql).to_pandas()
+    except Exception as e:
+        st.error(f"Error loading tasks: {e}")
+        return pd.DataFrame()
+
+
+def load_notes_for_task(task_id):
+    try:
+        df = session.sql(f"SELECT * FROM {TBL_NOTES} WHERE TASK_ID = {int(task_id)} ORDER BY CREATED_AT DESC").to_pandas()
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
+def get_distinct_platforms():
+    try:
+        df = session.sql(f"SELECT DISTINCT PLATFORM_AREA FROM {TBL_TASKS} WHERE PLATFORM_AREA IS NOT NULL AND PLATFORM_AREA != '' ORDER BY PLATFORM_AREA").to_pandas()
+        return df["PLATFORM_AREA"].tolist() if not df.empty else []
+    except Exception:
+        return []
+
+
+def get_distinct_owners():
+    try:
+        df = session.sql(f"SELECT DISTINCT OWNER FROM {TBL_TASKS} ORDER BY OWNER").to_pandas()
+        return df["OWNER"].tolist() if not df.empty else []
+    except Exception:
+        return []
+
+
+
+def insert_task(title, reason, platform, owner, reviewer, start_dt, end_dt, status, effort, pct, jira):
+    try:
+        end_val = f"'{end_dt}'" if end_dt else "NULL"
+        rev_val = f"'{_safe_sql(reviewer)}'" if reviewer else "NULL"
+        reason_val = f"'{_safe_sql(reason)}'" if reason else "NULL"
+        platform_val = f"'{_safe_sql(platform)}'" if platform else "NULL"
+        jira_val = f"'{_safe_sql(jira)}'" if jira else "NULL"
+        session.sql(f"""
+            INSERT INTO {TBL_TASKS} (TASK_TITLE, BUSINESS_REASON, PLATFORM_AREA, OWNER, REVIEWER,
+                               START_DATE, END_DATE, STATUS, EFFORT_DAYS, COMPLETION_PCT, JIRA_REFERENCE)
+            VALUES ('{_safe_sql(title)}', {reason_val}, {platform_val}, '{_safe_sql(owner)}', {rev_val},
+                    '{start_dt}', {end_val}, '{_safe_sql(status)}', {float(effort)}, {float(pct)}, {jira_val})
+        """).collect()
+        return True, f"Task '{title}' created successfully."
+    except Exception as e:
+        return False, f"Error creating task: {e}"
+
+
+def update_task(task_id, title, reason, platform, owner, reviewer, start_dt, end_dt, status, effort, pct, jira):
+    try:
+        end_val = f"'{end_dt}'" if end_dt else "NULL"
+        rev_val = f"'{_safe_sql(reviewer)}'" if reviewer else "NULL"
+        reason_val = f"'{_safe_sql(reason)}'" if reason else "NULL"
+        platform_val = f"'{_safe_sql(platform)}'" if platform else "NULL"
+        jira_val = f"'{_safe_sql(jira)}'" if jira else "NULL"
+        session.sql(f"""
+            UPDATE {TBL_TASKS} SET
+                TASK_TITLE = '{_safe_sql(title)}',
+                BUSINESS_REASON = {reason_val},
+                PLATFORM_AREA = {platform_val},
+                OWNER = '{_safe_sql(owner)}',
+                REVIEWER = {rev_val},
+                START_DATE = '{start_dt}',
+                END_DATE = {end_val},
+                STATUS = '{_safe_sql(status)}',
+                EFFORT_DAYS = {float(effort)},
+                COMPLETION_PCT = {float(pct)},
+                JIRA_REFERENCE = {jira_val},
+                UPDATED_AT = CURRENT_TIMESTAMP()
+            WHERE TASK_ID = {int(task_id)}
+        """).collect()
+        return True, "Task updated successfully."
+    except Exception as e:
+        return False, f"Error updating task: {e}"
+
+
+def delete_task(task_id):
+    try:
+        session.sql(f"DELETE FROM {TBL_NOTES} WHERE TASK_ID = {int(task_id)}").collect()
+        session.sql(f"DELETE FROM {TBL_TASKS} WHERE TASK_ID = {int(task_id)}").collect()
+        return True, "Task deleted successfully."
+    except Exception as e:
+        return False, f"Error deleting task: {e}"
+
+
+def insert_note(task_id, note_text, created_by):
+    try:
+        by_val = f"'{_safe_sql(created_by)}'" if created_by else "NULL"
+        session.sql(f"""
+            INSERT INTO {TBL_NOTES} (TASK_ID, NOTE_TEXT, CREATED_BY)
+            VALUES ({int(task_id)}, '{_safe_sql(note_text)}', {by_val})
+        """).collect()
+        return True, "Note added."
+    except Exception as e:
+        return False, f"Error adding note: {e}"
+
+
+def validate_task(title, owner, start_dt, end_dt, status, effort, pct):
+    errors = []
+    if not title or not title.strip():
+        errors.append("Task Title is required.")
+    if not owner:
+        errors.append("Owner is required.")
+    if not start_dt:
+        errors.append("Start Date is required.")
+    if status == "Closed" and not end_dt:
+        errors.append("End Date is required when status is Closed.")
+    if end_dt and start_dt and end_dt < start_dt:
+        errors.append("End Date cannot be before Start Date.")
+    if effort is not None and effort < 0:
+        errors.append("Effort (Days) cannot be negative.")
+    if pct is not None and (pct < 0 or pct > 100):
+        errors.append("Completion % must be between 0 and 100.")
+    if pct == 100 and status != "Closed":
+        errors.append("Status should be 'Closed' when Completion is 100%.")
+    return errors
+
+
+# ── Check Tables ──
+tables_ok, missing_tables = _check_tables_exist()
+
+# ── Header ──
+st.markdown("""
+<div class="header-container">
+    <p class="header-title">Team Effort Tracker</p>
+    <p class="header-sub">Track tasks, effort, and team progress</p>
+</div>
+""", unsafe_allow_html=True)
+
+if not tables_ok:
+    st.error(f"Missing table(s): {', '.join(missing_tables)}. Please create them in Snowflake before using this app.")
+    st.stop()
+
+# ── Success Banner ──
+if st.session_state.get("success_message"):
+    st.markdown(f'<div class="success-box">
