@@ -1,0 +1,120 @@
+# Team Effort Tracker -- Streamlit in Snowflake (SiS) App
+
+## Full Technical Summary
+
+**Purpose:** Replaces the Excel-based effort tracker. Allows team members to update task progress daily, gives leads real-time visibility into workload and effort, and supports bulk data import from Excel/CSV.
+
+**Runtime:** Streamlit in Snowflake (SiS) -- runs natively inside Snowflake, no external hosting. Uses Snowpark `get_active_session()` for all DB access.
+
+**Schema:** `DB_CORE_PRD.BACKUP_OPS`
+
+---
+
+## Snowflake Tables
+
+### 1. TASKS (`DB_CORE_PRD.BACKUP_OPS.TASKS`)
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| TASK_ID | NUMBER | PK, AUTOINCREMENT | Unique task identifier |
+| TASK_TITLE | VARCHAR(500) | NOT NULL | Short description of the work |
+| BUSINESS_REASON | VARCHAR(2000) | Nullable | Why this task is needed |
+| PLATFORM_AREA | VARCHAR(200) | Nullable | System or platform (e.g. Snowflake, API) |
+| OWNER | VARCHAR(200) | NOT NULL | Primary person(s). Can contain multiple names separated by `/` or `&` (e.g. "Alice/Bob" or "Name1 & Name2") |
+| REVIEWER | VARCHAR(200) | Nullable | Person reviewing or approving |
+| START_DATE | DATE | NOT NULL | When work started |
+| END_DATE | DATE | Nullable | When work closed |
+| STATUS | VARCHAR(50) | NOT NULL, DEFAULT 'Queued' | One of: Queued, In Progress, On Hold, Closed |
+| EFFORT_DAYS | NUMBER(10,2) | DEFAULT 0 | Total effort spent in days |
+| COMPLETION_PCT | NUMBER(5,2) | DEFAULT 0 | Progress 0-100 |
+| JIRA_REFERENCE | VARCHAR(500) | Nullable | Optional JIRA ticket or reference link |
+| CREATED_AT | TIMESTAMP_NTZ | DEFAULT CURRENT_TIMESTAMP() | Row creation time |
+| UPDATED_AT | TIMESTAMP_NTZ | DEFAULT CURRENT_TIMESTAMP() | Last update time |
+
+### 2. PROGRESS_NOTES (`DB_CORE_PRD.BACKUP_OPS.PROGRESS_NOTES`)
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| NOTE_ID | NUMBER | PK, AUTOINCREMENT | Unique note identifier |
+| TASK_ID | NUMBER | NOT NULL, FK -> TASKS | Links note to a task |
+| NOTE_TEXT | VARCHAR(4000) | NOT NULL | The update/comment text |
+| CREATED_BY | VARCHAR(200) | Nullable | Who added the note |
+| CREATED_AT | TIMESTAMP_NTZ | DEFAULT CURRENT_TIMESTAMP() | When note was added |
+
+### 3. TEAM_MEMBERS (`DB_CORE_PRD.BACKUP_OPS.TEAM_MEMBERS`) -- exists but NOT actively used
+
+| Column | Type | Constraints |
+|--------|------|-------------|
+| MEMBER_ID | NUMBER | PK, AUTOINCREMENT |
+| NAME | VARCHAR(200) | NOT NULL, UNIQUE |
+| ROLE | VARCHAR(50) | NOT NULL, DEFAULT 'Contributor' |
+| ACTIVE_STATUS | VARCHAR(20) | NOT NULL, DEFAULT 'Active' |
+| DEFAULT_REVIEWER | VARCHAR(200) | Nullable |
+| NOTES | VARCHAR(2000) | Nullable |
+| CREATED_AT | TIMESTAMP_NTZ | DEFAULT CURRENT_TIMESTAMP() |
+| UPDATED_AT | TIMESTAMP_NTZ | DEFAULT CURRENT_TIMESTAMP() |
+
+---
+
+## App Structure -- 3 Tabs
+
+### Tab 1: TASK UPDATES (primary working screen)
+
+- **Add new task form:** Title, Business Reason, Platform/Area (dropdown from existing values + "Other"), Owner (dropdown), Reviewer (dropdown), Start Date, End Date, Status, Effort Days, Completion %, JIRA Reference
+- **People dropdowns** built by merging: active TEAM_MEMBERS + distinct OWNER from TASKS + distinct REVIEWER from TASKS. Multi-owner fields like "Alice/Bob" and "Name1 & Name2" are split on `/`, `\`, and `&` so each individual appears separately
+- **Existing tasks grouped by owner** as expandable sections. Each owner shows task count (open/closed). Inside, each task has its own expander with: details, progress bar, quick update fields (status/effort/completion), inline note input, action buttons (Save, Edit All, Add Note, Delete)
+- **Filters:** Status dropdown, Owner dropdown (individual names after splitting), free text search on title
+- **Delete** has 2-step confirmation
+- **Edit All** opens inline editing section with all fields
+- **Validations:** title required, owner required, start date required, can't close without end date, end date can't precede start date, effort >= 0, completion 0-100, 100% requires Closed status
+
+### Tab 2: TEAM OVERVIEW (read-only for leads)
+
+- **Filters:** Owner, Status, Platform/Area, Start Date range
+- **6 metric cards:** Total Tasks, In Progress, Queued, On Hold, Closed, Total Effort (Days)
+- **Filtered task data table** with long-running flag (30+ days)
+- **4 charts in 2x2 grid** using `st.bar_chart(horizontal=True)`:
+  1. Effort by Owner (Days) -- uses exploded owners, effort split evenly between co-owners
+  2. Task Status Distribution
+  3. Tasks by Platform/Area
+  4. Open Tasks per Owner -- stacked by status (In Progress/Queued/On Hold)
+- Charts use `_explode_owners()` that splits multi-member OWNER fields and divides effort proportionally
+
+### Tab 3: DATA IMPORT (one-time migration tool)
+
+- Upload CSV or Excel file
+- Manual column mapping: 13 fields (Task Title, Business Reason, Platform/Area, Owner, Reviewer, Start Date, End Date, Status, Effort Days, Completion %, JIRA Reference, Comments/Notes)
+- Default values for Status and Owner when rows have gaps
+- Preview mapped data with validation (flags missing Title/Owner)
+- Bulk insert with progress bar
+- Comments column inserted as PROGRESS_NOTES entry (tagged "Imported")
+- Smart parsing: auto-converts dates, handles decimal completion (0.5 -> 50%), validates status values
+
+---
+
+## Technical Details
+
+- **1,200 lines** of Python, single file
+- **18 functions** (9 data access, 4 UI helpers, 5 business logic)
+- **27 try/except blocks** covering every Snowflake operation with `st.error()` feedback
+- **Dark theme:** #0e1117 background, #3b82f6 accent blue, #161b22 cards, all inline CSS via `st.markdown(unsafe_allow_html=True)`
+- **No emojis** (SiS resolves emojis through `snowflake.images` schema which may not be authorized)
+- **No `page_icon`** in `st.set_page_config`
+- **No Google Fonts `@import`** (external URLs blocked in SiS)
+- **No `st.dialog()`** (not available in SiS)
+- **Session:** `get_active_session()` from `snowflake.snowpark.context`
+- **SQL injection mitigation:** `_safe_sql()` escapes single quotes
+- **XSS prevention:** `_esc()` HTML-escapes user text in `unsafe_allow_html` blocks
+- **Multi-owner handling:** `/` and `&` separators split everywhere. Regex: `r"[/\\&]"`
+- **Widget key uniqueness:** keys include `task_id` + `owner_name` to prevent duplicate key errors
+
+---
+
+## Known Limitations
+
+1. TEAM_MEMBERS table exists but unused -- people list derived from TASKS data
+2. No authentication/role-based access
+3. No offline caching
+4. Charts use `st.bar_chart(horizontal=True)` with interactive zoom/pan (Vega-Lite) -- considering static matplotlib PNG charts
+5. SQL uses string interpolation with `_safe_sql()`, not parameterized queries
+6. Team size: ~10-20 people
