@@ -1,300 +1,79 @@
-    ========================================================================
-    PART 1 — WORKBOOK OVERVIEW
-    ========================================================================
-    1. Sheet name confirmation:
-       - Found sheet: "Enhancements" (exact case)
-       - Found sheet: "Automation" (exact case)
+-- ============================================================
+-- Team Effort Tracker — v2 schema
+-- Schema: DB_CORE_PRD.BACKUP_OPS
+-- Safe to run alongside existing v1 tables; see migration notes.
+-- ============================================================
 
-    2. Sheet statistics:
-       - Enhancements:
-         - Rows (excluding header): UNCERTAIN (very large, >200; active data, not archive)
-         - Columns: 11
-         - Nature: Mixed but predominantly active; includes historical closed work and current queued/in-progress items.
-       - Automation:
-         - Rows (excluding header): <50
-         - Columns: 10
-         - Nature: Active, small backlog plus some cancelled/queued automation ideas.
+-- 1. TEAM_MEMBERS (canonical people list — source of truth)
+CREATE TABLE IF NOT EXISTS DB_CORE_PRD.BACKUP_OPS.TEAM_MEMBERS (
+    MEMBER_ID        NUMBER           AUTOINCREMENT PRIMARY KEY,
+    FULL_NAME        VARCHAR(200)     NOT NULL UNIQUE,        -- canonical display name, e.g. "Harry Smith"
+    SHORT_NAME       VARCHAR(100),                             -- e.g. "Harry"
+    SNOWFLAKE_USER   VARCHAR(200)     UNIQUE,                  -- matches CURRENT_USER(); NULL until first login
+    ROLE             VARCHAR(50)      NOT NULL DEFAULT 'Contributor',  -- Contributor | Lead | Reviewer
+    ACTIVE_STATUS    VARCHAR(20)      NOT NULL DEFAULT 'Active',       -- Active | Inactive
+    NOTES            VARCHAR(2000),
+    CREATED_AT       TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
+    UPDATED_AT       TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP()
+);
 
-    3. Column alignment table:
+-- 2. TASKS (no more OWNER string; assignees move to junction table)
+CREATE TABLE IF NOT EXISTS DB_CORE_PRD.BACKUP_OPS.TASKS_V2 (
+    TASK_ID              NUMBER           AUTOINCREMENT PRIMARY KEY,
+    WORK_TYPE            VARCHAR(20)      NOT NULL,           -- 'Enhancement' | 'Automation'
+    TITLE                VARCHAR(500)     NOT NULL,
+    BUSINESS_REASON      VARCHAR(4000),                        -- parsed from "Why:"
+    PLATFORM_AREA        VARCHAR(500),                         -- parsed from "Where:"
+    REVIEWER_MEMBER_ID   NUMBER           REFERENCES TEAM_MEMBERS(MEMBER_ID),
+    START_DATE           DATE,                                 -- NULL allowed; import preserves "TBD" as NULL with a flag in NOTES
+    CLOSED_DATE          DATE,
+    STATUS               VARCHAR(50)      NOT NULL DEFAULT 'Queued',  -- Queued | In Progress | On Hold | Closed | Cancelled
+    EFFORT_DAYS          NUMBER(10,2)     DEFAULT 0,
+    COMPLETION_PCT       NUMBER(5,2)      DEFAULT 0,
+    JIRA_REFERENCE       VARCHAR(500),
+    OVERFLOW_ASSIGNEES   VARCHAR(500),                         -- names beyond the 3 slots, comma-separated; flagged in UI
+    IMPORT_NOTES         VARCHAR(2000),                        -- parser flags: "date ambiguous", "status was Pending(...)", etc.
+    CREATED_BY_MEMBER_ID NUMBER           REFERENCES TEAM_MEMBERS(MEMBER_ID),
+    CREATED_AT           TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
+    UPDATED_AT           TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
+    CONSTRAINT CK_WORK_TYPE CHECK (WORK_TYPE IN ('Enhancement','Automation')),
+    CONSTRAINT CK_STATUS   CHECK (STATUS IN ('Queued','In Progress','On Hold','Closed','Cancelled')),
+    CONSTRAINT CK_PCT      CHECK (COMPLETION_PCT BETWEEN 0 AND 100)
+);
 
-       col_letter | Enhancements header                 | Automation header         | match?
-       ---------- | ----------------------------------- | ------------------------- | ------
-       A          | Task Description                    | Task Description          | YES
-       B          | Assignee                            | Assignee                  | YES
-       C          | Reviewer                            | Reviewer                  | YES
-       D          | Start_Date                          | Start_Date                | YES
-       E          | Actual Effort (in Days)             | Actual Effort (in Days)   | YES
-       F          | Status                              | Status                    | YES
-       G          | Release JIRA (Optional)             | JIRA (Optional)           | PARTIAL (name only)
-       H          | % Completed                         | % Completed               | YES
-       I          | Status Update                       | Status Update             | YES
-       J          | Closed_Date                         | Closed_Date               | YES
-       K          | (extra in Enhancements)             | —                         | MISMATCH
+-- 3. TASK_ASSIGNEES junction (replaces OWNER free-text)
+CREATE TABLE IF NOT EXISTS DB_CORE_PRD.BACKUP_OPS.TASK_ASSIGNEES (
+    TASK_ID         NUMBER   NOT NULL REFERENCES TASKS_V2(TASK_ID),
+    MEMBER_ID       NUMBER   NOT NULL REFERENCES TEAM_MEMBERS(MEMBER_ID),
+    ASSIGNEE_ROLE   VARCHAR(20) NOT NULL,   -- 'primary' | 'secondary' | 'tertiary'
+    CREATED_AT      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+    PRIMARY KEY (TASK_ID, MEMBER_ID),
+    CONSTRAINT CK_ROLE CHECK (ASSIGNEE_ROLE IN ('primary','secondary','tertiary'))
+);
 
-    ========================================================================
-    PART 2 — PER-SHEET DEEP PROFILE
-    ========================================================================
+-- 4. PROGRESS_NOTES (same idea as v1, now FK to MEMBER_ID for attribution)
+CREATE TABLE IF NOT EXISTS DB_CORE_PRD.BACKUP_OPS.PROGRESS_NOTES_V2 (
+    NOTE_ID          NUMBER           AUTOINCREMENT PRIMARY KEY,
+    TASK_ID          NUMBER           NOT NULL REFERENCES TASKS_V2(TASK_ID),
+    NOTE_TEXT        VARCHAR(4000)    NOT NULL,
+    NOTE_DATE        DATE,                                     -- parsed from "25/06 :" prefix when present; else NULL
+    CREATED_BY_MEMBER_ID NUMBER        REFERENCES TEAM_MEMBERS(MEMBER_ID),
+    IS_IMPORTED      BOOLEAN          DEFAULT FALSE,
+    CREATED_AT       TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP()
+);
 
-    === SHEET: Enhancements ===
+-- Indexes for hot paths
+CREATE INDEX IF NOT EXISTS IX_TASKS_V2_STATUS   ON TASKS_V2(STATUS);
+CREATE INDEX IF NOT EXISTS IX_TASKS_V2_WORKTYPE ON TASKS_V2(WORK_TYPE);
+CREATE INDEX IF NOT EXISTS IX_NOTES_V2_TASK     ON PROGRESS_NOTES_V2(TASK_ID);
+CREATE INDEX IF NOT EXISTS IX_ASSIGN_MEMBER     ON TASK_ASSIGNEES(MEMBER_ID);
 
-    HEADERS (row 1):
-    Task Description | Assignee | Reviewer | Start_Date | Actual Effort (in Days) | Status | Release JIRA (Optional) | % Completed | Status Update | Closed_Date
 
-    COLUMN PROFILE:
-    A | Task Description | free-text | ~100% | high | N/A | examples: "File transfer to new interface", "Health Check Report"
-    B | Assignee | person-list | ~99% | ~20 | N/A | "Varun", "Sandesh / Ben / Harry"
-    C | Reviewer | person | ~98% | ~10 | N/A | "Jai", "Yeshwenth"
-    D | Start_Date | date/text | ~95% | many | min 07/20/2024, max 08/04/2026 | "06/17/2025", "TBD"
-    E | Actual Effort (in Days) | numeric | ~90% | ~20 | min 0, max 50 | 1, 15, 0.5
-    F | Status | enum | ~100% | ~6 | N/A | Closed, In Progress, Queued, On Hold, Cancelled
-    G | Release JIRA (Optional) | text/url | ~60% | many | N/A | ISUP-773, DIB-206
-    H | % Completed | numeric/text | ~85% | many | min 0, max 100 | 100, 80, NA
-    I | Status Update | free-text | ~95% | very high | N/A | multi-line logs
-    J | Closed_Date | date/text | ~80% | many | varies | 21/06/2025, NA
 
-    MERGED CELLS: none observed
-    HIDDEN ROWS/COLS: none observed
-    FORMULAS: none observed
-    DATA VALIDATION / DROPDOWNS:
-    - Status column: Queued / In Progress / Closed / On Hold / Cancelled
+List every distinct name token found in Assignee, Reviewer, and Status
+Update across both sheets, after splitting on "/", "&", ",", ";",
+" and ", and newline. One token per line, sorted alphabetically, with
+occurrence count. Only output the list, no commentary.
 
-    CELL FILL COLOURS:
-    UNCERTAIN — file content text export does not preserve fills; original Excel required.
 
-    SECTION-HEADER / SUBTOTAL / BLANK-SEPARATOR ROWS:
-    - Multiple blank separator rows between logical groups (row numbers UNCERTAIN)
 
-    SAMPLE ROWS:
-    (row numbers approximate due to text extraction)
-
-    - 1 assignee:
-      row ~6 | Health Check Report | Sandesh | Yeshwenth | 06/17/2025 | 3 | Closed |  | 100 | 18/06/2025: Comment/update<NL>17/06/2025: Created first draft... | 21/06/2025
-
-    - 2 assignees:
-      row ~20 | Clarity Reports (3 Reports)<NL>Why:<NL>Where: Power BI | Yeshwenth | Jai | 04/12/2025 | 15 | Closed |  | 100 | 09/07/2025 - Another meeting... | 09/07/2025
-
-    - 3 assignees:
-      row ~38 | End Of Financial Year Checks | Sandesh / Ben / Harry | Yeshwenth | 06/30/2025 | 1 | Closed |  | 100 | I have sent out... | —
-
-    - 4+ assignees:
-      row ~120 | Remove the Duplicates in Snowflake... | Varun / Anshul / Akash/ Ramana | Yeshwenth | — | 0.7 | In Progress |  | — | 1-Apr - Some tables... | —
-
-    - Status=Closed but Closed_Date blank:
-      multiple rows (e.g. Status Closed, Closed_Date NA)
-
-    - % Completed=100 but Status not Closed:
-      row ~?? | Status = In Progress, % Completed = 100
-
-    - Longest Status Update:
-      row ~55 | Update the Managed interfaces Excel POC | ... | multi-year running log
-
-    - Shortest non-empty Status Update:
-      row ~10 | Streamlit App | ... | "Version 1 is completed and deployed in PROD"
-
-    - Oldest Start_Date:
-      row ~70 | Ensure to remove duplicates as per Health Check Report | Start_Date 07/20/2024
-
-    - Newest Start_Date:
-      row ~200 | Supplier Central - new tables and DPs | 08/04/2026
-
-    - Task Description with Why/Where:
-      row ~1 | File transfer to new interface<NL>Why: BR - File transfers...<NL>Where: Azure/Azure DB
-
-    - Plain one-liner:
-      row ~90 | Snowpipe Issues - Capturing the failures. Transport IM
-
-    (Automation sheet follows similar structure.)
-
-    ========================================================================
-    PART 3 — TASK DESCRIPTION DEEP PARSE
-    ========================================================================
-    1. Cells containing "Why:" or equivalent: ~75%
-    2. Cells containing "Where:" or equivalent: ~70%
-    3. Plain one-line titles: ~20%
-    4. Distinct sub-labels:
-       - Why (≈150)
-       - Where (≈140)
-       - Reason (≈5)
-       - How (≈3)
-       - Impact (≈2)
-       - What / When (rare)
-
-    5. 10 verbatim examples (abbreviated):
-       a) File transfer to new interface<NL>Why: BR - File transfers...<NL>Where: Azure/Azure DB
-       b) Health Check Report<NL>Why: To report the quality of data...<NL>Where: Power BI
-       c) Support Handover Refinement<NL>Why :New process...
-       d) Snowpipe Issues - Capturing the failures. Transport IM
-       e) Dupe check before DBT job for COL online<NL>Why<NL>Currently due to duplicate invoices...<NL>Where<NL>Snowflake script...
-
-    6. Proposed parse example:
-       TITLE: File transfer to new interface
-       BUSINESS_REASON: BR - File transfers re-pointing from EAS to RAFE...
-       PLATFORM_AREA: Azure/Azure DB
-
-    UNCERTAIN where labels missing or stacked oddly.
-
-    ========================================================================
-    PART 4 — STATUS UPDATE DEEP PARSE
-    ========================================================================
-    1. % with at least one dated entry: ~80%
-    2. Avg entries per non-empty cell: ~5; max >15
-    3. Date-prefix formats:
-       - DD/MM/YYYY (most)
-       - DD/MM
-       - DD/MMM
-       - MM/DD/YYYY (ambiguous, rare)
-       - other
-
-    4. Separators:
-       - ":" dominant
-       - "-" common
-
-    5. % with at least one undated entry: ~25%
-    6. Order:
-       - Oldest-first common
-       - Mixed frequent
-       - Newest-first rare
-
-    7–8. Example:
-       "09/07/2025 - Another meeting..."<NL>"03/07/2025: Completed"
-       entry1: date=09/07/2025 | clean_text=Another meeting...
-       entry2: date=03/07/2025 | clean_text=Completed
-
-    9. JIRA tokens found in Status Update:
-       e.g. row ~12: ISUP-800, row ~90: https://colesgroup.atlassian.net/browse/ISUP-827
-
-    10. Name tokens mismatch:
-       row ~22 | Assignee=Raph | tokens=Harry, Yesh
-
-    ========================================================================
-    PART 5 — PEOPLE NORMALISATION
-    ========================================================================
-    A. Raw tokens (sample):
-       Varun | 50+ | both | Assignee | rows ~1,5,10
-       Sandesh | 30+ | both | Assignee | —
-       Harry | 20 | Enhancements | Status Update | —
-
-    B. Canonical mapping:
-       CANONICAL: Harry
-         VARIANTS: Harry, Harr
-         CONFIDENCE: medium
-         REASON: Shortened form in updates
-
-    C. Multi-assignee analysis:
-       1. Cell count by person count:
-          - 1: majority
-          - 2: ~20%
-          - 3: several
-          - 4+: present (flagged)
-       2. Separator: "/" dominant
-       3. Order: UNCERTAIN — appears arbitrary
-       4. Examples:
-          row ~38 | Sandesh / Ben / Harry
-       5. Same person Assignee+Reviewer: some rows (e.g. Jai)
-
-    Proposed rule:
-    - 1 name → primary
-    - 2 names → primary, secondary
-    - 3 names → primary, secondary, tertiary
-    - 4+ → first three as above; remainder stored as overflow list
-
-    ========================================================================
-    PART 6 — STATUS VOCABULARY
-    ========================================================================
-    1. Distinct Status:
-       Closed (~70%)
-       In Progress
-       Queued
-       On Hold
-       Cancelled
-
-    2. Mapping:
-       Closed → Closed
-       In Progress → In Progress
-       Queued → Queued
-       On Hold → On Hold
-       Cancelled → Cancelled
-
-    3. Blank Status rows:
-       Enhancements: a few
-       Automation: some
-
-    4. Values not in dropdown:
-       "Pending(waiting...)" (free-text hybrid)
-
-    ========================================================================
-    PART 7 — DATE HYGIENE
-    ========================================================================
-    1. Formats:
-       - DD/MM/YYYY
-       - MM/DD/YYYY
-       - D/M
-       - text: NA, TBD, Pending
-    2. Ambiguous examples:
-       row ~18: "7/3/2025"
-       row ~44: "10/4/25"
-    3. Non-date cells:
-       NA, N/A, Pending(...)
-    4. Closed before Start: a few anomalies
-    5. Status=Closed but Closed_Date blank: many rows
-    6. Closed_Date set but Status not Closed: several rows
-
-    ========================================================================
-    PART 8 — DATA QUALITY AUDIT
-    ========================================================================
-    A. Exact duplicates: none obvious
-    B. Same title + same primary assignee: multiple recurring health-check tasks
-    C. Near-duplicate titles: e.g. "Duplicates fix for ..." cluster
-    D. Blank Assignee rows: very few
-    E. %Completed=100 but Status not Closed: several
-    F. Status Closed but %Completed !=100: several (80%)
-    G. Effort=0 but Status Closed/In Progress: some rows
-    H. Missing Start_Date: multiple
-    I. Cross-sheet matches:
-       - "Dupe check before DBT job for COL online" appears conceptually similar
-
-    ========================================================================
-    PART 9 — FREE-TEXT FIELD HYGIENE
-    ========================================================================
-    Enhancements:
-    - Task Description length: max >500 chars, avg ~200
-    - Status Update length: max >2000, avg ~400
-    - % with <NL>: >60%
-    - Bullets: ~15%
-
-    Automation:
-    - Smaller, similar patterns.
-
-    ========================================================================
-    PART 10 — CROSS-SHEET RELATIONSHIPS
-    ========================================================================
-    1. Possible keys: Task Description similarity, JIRA
-    2. Sheets represent different work types:
-       - Enhancements: BAU + project + improvements
-       - Automation: scripting/process automation
-    3. Tasks not formally moved; duplicated conceptually rather than migrated.
-
-    ========================================================================
-    PART 11 — RECOMMENDATIONS
-    ========================================================================
-    1. Enforce structured Date fields (rows ~18, ~44)
-    2. Enforce Status vs % Completed consistency (rows ~30+)
-    3. Split Task Description structured fields
-    4. Normalise Status Update logs
-    5. Validate multi-assignee max=3
-    6. Force Closed_Date when Status=Closed
-    7. Separate Effort planned vs actual
-    8. Stop free-text in Status column
-    9. Canonicalise people names
-    10. Extract JIRA references from text
-
-    ========================================================================
-    PART 12 — OPEN QUESTIONS FOR THE HUMAN
-    ========================================================================
-    - Are rows with Status=Closed but %Completed=80 actually complete?
-    - Should NA/N/A be treated as null or literal?
-    - Is order of multi-assignee meaningful?
-    - Are names like "JP", "Harr" valid standalone?
-    - Several Start_Date values look like MM/DD — confirm locale.
-    - Should cancelled items require Closed_Date?
-    - Are Automation items expected to graduate into Enhancements?
