@@ -1,5 +1,24 @@
-SELECT TABLE_NAME
-FROM DB_CORE_PRD.INFORMATION_SCHEMA.TABLES
-WHERE TABLE_SCHEMA = 'BACKUP_OPS'
-  AND TABLE_NAME IN ('TEAM_MEMBERS','TASKS_V2','TASK_ASSIGNEES','PROGRESS_NOTES_V2')
-ORDER BY TABLE_NAME;
+    Aiko | 15
+    AIko | 1
+    Akash | 1
+    Anshul | 15
+    Batch Team | 1
+    Ben | 4
+    Benjamin | 1
+    Daniela | 5
+    Dion | 1
+    Ellery | 9
+    Gunjan | 2
+    Haani | 7
+    Harrison | 9
+    Harry | 2
+    Jai | 70
+    JP | 1
+    POppy | 1
+    Ramana | 1
+    Raph | 18
+    Ravi | 15
+    Sandesh | 14
+    Varun | 29
+    Yesh | 1
+    Yeshwenth | 18
