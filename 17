@@ -1,13 +1,5 @@
-DROP TABLE DB_CORE_PRD.BACKUP_OPS.TEAM_MEMBERS;
+source_sheet,source_row,work_type,title,business_reason,platform_area,reviewer_name,primary_assignee,secondary_assignee,tertiary_assignee,overflow_assignees,start_date,closed_date,status,effort_days,completion_pct,jira_reference,import_notes
+...
 
-CREATE TABLE DB_CORE_PRD.BACKUP_OPS.TEAM_MEMBERS (
-    MEMBER_ID        NUMBER           AUTOINCREMENT PRIMARY KEY,
-    FULL_NAME        VARCHAR(200)     NOT NULL UNIQUE,
-    SHORT_NAME       VARCHAR(100),
-    SNOWFLAKE_USER   VARCHAR(200)     UNIQUE,
-    ROLE             VARCHAR(50)      NOT NULL DEFAULT 'Contributor',
-    ACTIVE_STATUS    VARCHAR(20)      NOT NULL DEFAULT 'Active',
-    NOTES            VARCHAR(2000),
-    CREATED_AT       TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP(),
-    UPDATED_AT       TIMESTAMP_NTZ    DEFAULT CURRENT_TIMESTAMP()
-);
+source_sheet,source_row,note_date,note_text
+...
