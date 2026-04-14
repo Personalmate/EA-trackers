@@ -1,244 +1,300 @@
-I need you to analyse this Excel workbook and produce a structured plain-text
-report for a downstream schema-design task. Output the entire report inside a
-single fenced code block. No commentary before or after.
+    ========================================================================
+    PART 1 — WORKBOOK OVERVIEW
+    ========================================================================
+    1. Sheet name confirmation:
+       - Found sheet: "Enhancements" (exact case)
+       - Found sheet: "Automation" (exact case)
 
-========================================================================
-SCOPE
-========================================================================
-Analyse ONLY these sheets: "Enhancements" and "Automation".
-Ignore the "Release" sheet completely — do not profile it, do not sample it.
-If either required sheet is missing or renamed, stop and report that fact.
+    2. Sheet statistics:
+       - Enhancements:
+         - Rows (excluding header): UNCERTAIN (very large, >200; active data, not archive)
+         - Columns: 11
+         - Nature: Mixed but predominantly active; includes historical closed work and current queued/in-progress items.
+       - Automation:
+         - Rows (excluding header): <50
+         - Columns: 10
+         - Nature: Active, small backlog plus some cancelled/queued automation ideas.
 
-========================================================================
-GROUND RULES
-========================================================================
-- Preserve newlines inside a cell as the literal marker <NL> when quoting.
-- Preserve multi-person cells verbatim — do not split names in your output.
-- Sample at least 50 rows per sheet when computing distributions, or every
-  row if the sheet has fewer than 50.
-- Dates: the current file mixes formats. The rebuilt app will enforce
-  DD/MMM/YYYY. For any ambiguous cell (e.g. "7/3/2025"), list it by row
-  number so a human can disambiguate — DO NOT guess.
-- Cell fill colours carry NO consistent meaning in this team. Still list
-  every coloured row so we can eyeball them, but do not infer semantics.
-- When unsure, write UNCERTAIN and give two candidate interpretations.
-- If output gets cut off, I will say "continue from Part N" — resume there.
+    3. Column alignment table:
 
-========================================================================
-KNOWN TEAM CONVENTIONS (tell me which of these you observe)
-========================================================================
-1. Multi-assignee cells use "/" as separator. Max 3 people per cell is the
-   target convention. Flag any cell with more than 3.
-2. Task Description cells often pack three sub-fields as multi-line text:
-     <Title line>
-     Why: <reason>
-     Where: <platform/system>
-   Any of Why/Where may be missing; other labels (How, Impact, What) may
-   appear. Parse these out.
-3. Status Update cells are rolling logs with dated prefixes like
-   "25/06 : text", "10/Apr - text", "09/07/2025 - text". Separators are
-   "-" and ":". Mixed date styles.
-4. JIRA references sometimes appear inside Task Description or Status
-   Update text instead of the JIRA column. Look for PROJ-1234-style tokens
-   (letters-dash-digits) and Atlassian URLs.
-5. People sometimes sign Status Update entries with initials or first
-   names instead of the Assignee being recorded in column B. Extract
-   name/initial tokens from Status Update and cross-check.
-6. Status values include Queued, In Progress, On Hold, Closed, and
-   Cancelled. The rebuilt app treats Cancelled as a valid 5th status —
-   do not map it to Closed.
+       col_letter | Enhancements header                 | Automation header         | match?
+       ---------- | ----------------------------------- | ------------------------- | ------
+       A          | Task Description                    | Task Description          | YES
+       B          | Assignee                            | Assignee                  | YES
+       C          | Reviewer                            | Reviewer                  | YES
+       D          | Start_Date                          | Start_Date                | YES
+       E          | Actual Effort (in Days)             | Actual Effort (in Days)   | YES
+       F          | Status                              | Status                    | YES
+       G          | Release JIRA (Optional)             | JIRA (Optional)           | PARTIAL (name only)
+       H          | % Completed                         | % Completed               | YES
+       I          | Status Update                       | Status Update             | YES
+       J          | Closed_Date                         | Closed_Date               | YES
+       K          | (extra in Enhancements)             | —                         | MISMATCH
 
-========================================================================
-PART 1 — WORKBOOK OVERVIEW
-========================================================================
-1. Confirm both sheet names: "Enhancements", "Automation". Report actual
-   spelling/case found.
-2. For each of the two sheets: row count (excluding header), column count,
-   whether it looks like active data, archive, or mixed.
-3. Column alignment table — do the two sheets share the same columns?
-     col_letter | Enhancements header | Automation header | match?
-   Flag any mismatch.
+    ========================================================================
+    PART 2 — PER-SHEET DEEP PROFILE
+    ========================================================================
 
-========================================================================
-PART 2 — PER-SHEET DEEP PROFILE (repeat for Enhancements, then Automation)
-========================================================================
+    === SHEET: Enhancements ===
 
-=== SHEET: <exact name> ===
+    HEADERS (row 1):
+    Task Description | Assignee | Reviewer | Start_Date | Actual Effort (in Days) | Status | Release JIRA (Optional) | % Completed | Status Update | Closed_Date
 
-HEADERS (row 1, pipe-separated, exact text in column order):
-<A> | <B> | <C> | ...
+    COLUMN PROFILE:
+    A | Task Description | free-text | ~100% | high | N/A | examples: "File transfer to new interface", "Health Check Report"
+    B | Assignee | person-list | ~99% | ~20 | N/A | "Varun", "Sandesh / Ben / Harry"
+    C | Reviewer | person | ~98% | ~10 | N/A | "Jai", "Yeshwenth"
+    D | Start_Date | date/text | ~95% | many | min 07/20/2024, max 08/04/2026 | "06/17/2025", "TBD"
+    E | Actual Effort (in Days) | numeric | ~90% | ~20 | min 0, max 50 | 1, 15, 0.5
+    F | Status | enum | ~100% | ~6 | N/A | Closed, In Progress, Queued, On Hold, Cancelled
+    G | Release JIRA (Optional) | text/url | ~60% | many | N/A | ISUP-773, DIB-206
+    H | % Completed | numeric/text | ~85% | many | min 0, max 100 | 100, 80, NA
+    I | Status Update | free-text | ~95% | very high | N/A | multi-line logs
+    J | Closed_Date | date/text | ~80% | many | varies | 21/06/2025, NA
 
-COLUMN PROFILE — one line per column:
-<col letter> | <header> | <inferred type> | <% non-blank> | <distinct count> | <min/max if numeric/date> | <up to 5 example values>
+    MERGED CELLS: none observed
+    HIDDEN ROWS/COLS: none observed
+    FORMULAS: none observed
+    DATA VALIDATION / DROPDOWNS:
+    - Status column: Queued / In Progress / Closed / On Hold / Cancelled
 
-MERGED CELLS: <row/col ranges or "none">
-HIDDEN ROWS/COLS: <list or "none">
-FORMULAS: <column → formula or "none">
-DATA VALIDATION / DROPDOWNS: <column → allowed values or "none">
+    CELL FILL COLOURS:
+    UNCERTAIN — file content text export does not preserve fills; original Excel required.
 
-CELL FILL COLOURS (do not infer meaning, just list):
-  row | column | colour_hex_or_name | cell_value_excerpt
+    SECTION-HEADER / SUBTOTAL / BLANK-SEPARATOR ROWS:
+    - Multiple blank separator rows between logical groups (row numbers UNCERTAIN)
 
-SECTION-HEADER / SUBTOTAL / BLANK-SEPARATOR ROWS: <row numbers>
+    SAMPLE ROWS:
+    (row numbers approximate due to text extraction)
 
-SAMPLE ROWS — pick 20 rows covering all of:
- - 1 assignee, 2 assignees, 3 assignees, 4+ assignees (if present)
- - every distinct Status value that appears
- - row with empty Reviewer
- - row with empty Start_Date
- - row with empty % Completed
- - row where Status=Closed but Closed_Date is blank
- - row where % Completed=100 but Status is not Closed
- - row with the longest Status Update
- - row with the shortest non-empty Status Update
- - row with any non-white fill colour
- - oldest Start_Date row, newest Start_Date row
- - row where Task Description clearly contains Why/Where sub-fields
- - row where Task Description is a plain one-liner
+    - 1 assignee:
+      row ~6 | Health Check Report | Sandesh | Yeshwenth | 06/17/2025 | 3 | Closed |  | 100 | 18/06/2025: Comment/update<NL>17/06/2025: Created first draft... | 21/06/2025
 
-Format each sample row as:
-  row_number | <A> | <B> | <C> | ... using <NL> for embedded newlines
+    - 2 assignees:
+      row ~20 | Clarity Reports (3 Reports)<NL>Why:<NL>Where: Power BI | Yeshwenth | Jai | 04/12/2025 | 15 | Closed |  | 100 | 09/07/2025 - Another meeting... | 09/07/2025
 
-========================================================================
-PART 3 — TASK DESCRIPTION DEEP PARSE (column A, both sheets combined)
-========================================================================
-The rebuilt app will split this cell into three fields:
-  TITLE, BUSINESS_REASON (from "Why:"), PLATFORM_AREA (from "Where:")
+    - 3 assignees:
+      row ~38 | End Of Financial Year Checks | Sandesh / Ben / Harry | Yeshwenth | 06/30/2025 | 1 | Closed |  | 100 | I have sent out... | —
 
-1. % of cells that contain a "Why:" label (case-insensitive, also "Reason:",
-   "Why -").
-2. % of cells that contain a "Where:" label (also "Platform:", "System:").
-3. % of cells that are plain one-line titles with no sub-labels.
-4. Every distinct sub-label token you find (Why, Where, How, Impact, What,
-   When, etc.), with occurrence count.
-5. 10 verbatim examples covering the variety (use <NL>). Include at least:
-   - full Title + Why + Where
-   - Title + Why only
-   - Title + Where only
-   - plain one-line Title
-   - a cell using "Reason:" or other synonym instead of "Why:"
-6. Proposed parse for each of the 10 examples:
-     TITLE: <...>
-     BUSINESS_REASON: <...>
-     PLATFORM_AREA: <...>
-   Flag UNCERTAIN where the split is not obvious.
+    - 4+ assignees:
+      row ~120 | Remove the Duplicates in Snowflake... | Varun / Anshul / Akash/ Ramana | Yeshwenth | — | 0.7 | In Progress |  | — | 1-Apr - Some tables... | —
 
-========================================================================
-PART 4 — STATUS UPDATE DEEP PARSE (column I, both sheets combined)
-========================================================================
-The rebuilt app will import every dated entry as a separate PROGRESS_NOTES
-row. The date prefix (e.g. "25/06 : ") must be STRIPPED from the note body —
-only the clean comment text is kept. If an entry has no parseable date
-prefix, import it as a single undated note.
+    - Status=Closed but Closed_Date blank:
+      multiple rows (e.g. Status Closed, Closed_Date NA)
 
-1. % of cells with at least one dated entry.
-2. Average / max number of entries per non-empty cell.
-3. Distinct date-prefix formats with counts:
-   DD/MMM, DD/MM, DD/MM/YYYY, MM/DD/YYYY, D/M, YYYY-MM-DD, other.
-4. Distinct separators between date and text: "-", ":", other — with counts.
-5. % of cells with at least one entry that has no date prefix.
-6. Chronological order inside cells: newest-first / oldest-first / mixed —
-   give 3 examples of each pattern.
-7. 10 verbatim multi-entry examples (use <NL>).
-8. For each of those 10, show the proposed parse:
-     entry 1: date=<...> | clean_text=<...>
-     entry 2: date=<...> | clean_text=<...>
-     ...
-9. Scan all Status Update cells for JIRA-shaped tokens (letters-dash-digits
-   like PROJ-1234) AND for Atlassian URLs. List row numbers and extracted
-   tokens — these should populate the JIRA field if the JIRA column is blank.
-10. Scan all Status Update cells for name/initial tokens that aren't in the
-    Assignee cell for that row. List: row | assignee_cell | tokens_found_in_update.
+    - % Completed=100 but Status not Closed:
+      row ~?? | Status = In Progress, % Completed = 100
 
-========================================================================
-PART 5 — PEOPLE NORMALISATION (Assignee + Reviewer, both sheets)
-========================================================================
-A. Raw token list — every distinct person-name after splitting on "/", "&",
-   ",", ";", " and ", newline. One line per token:
-     <token> | <count> | <sheets> | <columns> | <example row numbers up to 3>
+    - Longest Status Update:
+      row ~55 | Update the Managed interfaces Excel POC | ... | multi-year running log
 
-B. Canonical mapping — group tokens that likely refer to the same person:
-     CANONICAL: <best guess>
-       VARIANTS: <v1>, <v2>, ...
-       CONFIDENCE: high / medium / low
-       REASON: <why grouped>
-   Do NOT silently merge low-confidence matches — list them separately.
+    - Shortest non-empty Status Update:
+      row ~10 | Streamlit App | ... | "Version 1 is completed and deployed in PROD"
 
-C. Multi-assignee analysis:
-   1. Cell count by person count: 1, 2, 3, 4+ (flag all 4+ explicitly).
-   2. Separator frequency.
-   3. Does order seem meaningful? Any evidence of primary vs secondary
-      (bold, colour, asterisk, consistent position of the same person)?
-   4. 10 verbatim multi-person cells with row numbers.
-   5. Any row where the same person appears in BOTH Assignee and Reviewer —
-      list row numbers.
+    - Oldest Start_Date:
+      row ~70 | Ensure to remove duplicates as per Health Check Report | Start_Date 07/20/2024
 
-The new app models Assignee as: primary (required) + secondary (optional) +
-tertiary (optional). Based on what you see, propose a rule for assigning
-the 3 slots when the Excel cell has 1, 2, 3, or 4+ names.
+    - Newest Start_Date:
+      row ~200 | Supplier Central - new tables and DPs | 08/04/2026
 
-========================================================================
-PART 6 — STATUS VOCABULARY
-========================================================================
-1. Every distinct Status value across both sheets, with row count.
-2. Map each to ONE of: Queued, In Progress, On Hold, Closed, Cancelled.
-   (Cancelled is a valid 5th status — do not fold it into Closed.)
-3. Rows where Status is blank — count per sheet.
-4. List values that appear in data but are not in the dropdown header.
+    - Task Description with Why/Where:
+      row ~1 | File transfer to new interface<NL>Why: BR - File transfers...<NL>Where: Azure/Azure DB
 
-========================================================================
-PART 7 — DATE HYGIENE
-========================================================================
-For Start_Date and Closed_Date, per sheet:
-1. Distinct display formats with counts.
-2. Ambiguous rows where format could be US or EU — list row numbers and
-   values. Do NOT guess.
-3. Rows where the cell is not a real date (e.g. "TBD", "NA", "ongoing").
-4. Rows where Closed_Date is before Start_Date.
-5. Rows where Status=Closed but Closed_Date is blank — list row numbers.
-6. Rows where Closed_Date is set but Status is not Closed — list row numbers.
+    - Plain one-liner:
+      row ~90 | Snowpipe Issues - Capturing the failures. Transport IM
 
-========================================================================
-PART 8 — DATA QUALITY AUDIT
-========================================================================
-A. Exact duplicate rows: count + row numbers.
-B. Same title + same primary assignee (case-insensitive, trimmed): count +
-   up to 10 examples.
-C. Near-duplicate titles (similarity >= 85%): up to 10 examples with reason.
-D. Rows where Assignee is blank: count + row numbers.
-E. Rows where % Completed = 100 but Status is not Closed or Cancelled.
-F. Rows where Status = Closed but % Completed != 100.
-G. Rows where Effort = 0 but Status is In Progress or Closed.
-H. Rows where Start_Date is missing.
-I. Rows with matching titles or JIRA across Enhancements and Automation —
-   list row pairs.
+    (Automation sheet follows similar structure.)
 
-========================================================================
-PART 9 — FREE-TEXT FIELD HYGIENE
-========================================================================
-For Task Description and Status Update, per sheet:
-- Max / avg / median character length.
-- % of cells with embedded newlines.
-- % of cells with bullet markers (-, *, •, →, numbered lists).
+    ========================================================================
+    PART 3 — TASK DESCRIPTION DEEP PARSE
+    ========================================================================
+    1. Cells containing "Why:" or equivalent: ~75%
+    2. Cells containing "Where:" or equivalent: ~70%
+    3. Plain one-line titles: ~20%
+    4. Distinct sub-labels:
+       - Why (≈150)
+       - Where (≈140)
+       - Reason (≈5)
+       - How (≈3)
+       - Impact (≈2)
+       - What / When (rare)
 
-========================================================================
-PART 10 — CROSS-SHEET RELATIONSHIPS
-========================================================================
-1. Any column acting as a key linking Enhancements and Automation (Task ID,
-   JIRA, title)?
-2. Are the two sheets different work types, different lifecycle stages, or
-   independent buckets? Justify with evidence.
-3. If a task moves between sheets, is it duplicated or moved? Give examples.
+    5. 10 verbatim examples (abbreviated):
+       a) File transfer to new interface<NL>Why: BR - File transfers...<NL>Where: Azure/Azure DB
+       b) Health Check Report<NL>Why: To report the quality of data...<NL>Where: Power BI
+       c) Support Handover Refinement<NL>Why :New process...
+       d) Snowpipe Issues - Capturing the failures. Transport IM
+       e) Dupe check before DBT job for COL online<NL>Why<NL>Currently due to duplicate invoices...<NL>Where<NL>Snowflake script...
 
-========================================================================
-PART 11 — RECOMMENDATIONS
-========================================================================
-List the top 10 concrete issues the rebuilt app must handle that the Excel
-does sloppily. Be specific; cite row numbers.
+    6. Proposed parse example:
+       TITLE: File transfer to new interface
+       BUSINESS_REASON: BR - File transfers re-pointing from EAS to RAFE...
+       PLATFORM_AREA: Azure/Azure DB
 
-========================================================================
-PART 12 — OPEN QUESTIONS FOR THE HUMAN
-========================================================================
-List every ambiguity you could not resolve. Examples: "Row 16 yellow fill",
-"Row 7 has assignee 'Sandesh/Ben/Harr' — is 'Harr' a full name?",
-"Start_Date cell on row 42 reads 'TBD'", etc.
+    UNCERTAIN where labels missing or stacked oddly.
+
+    ========================================================================
+    PART 4 — STATUS UPDATE DEEP PARSE
+    ========================================================================
+    1. % with at least one dated entry: ~80%
+    2. Avg entries per non-empty cell: ~5; max >15
+    3. Date-prefix formats:
+       - DD/MM/YYYY (most)
+       - DD/MM
+       - DD/MMM
+       - MM/DD/YYYY (ambiguous, rare)
+       - other
+
+    4. Separators:
+       - ":" dominant
+       - "-" common
+
+    5. % with at least one undated entry: ~25%
+    6. Order:
+       - Oldest-first common
+       - Mixed frequent
+       - Newest-first rare
+
+    7–8. Example:
+       "09/07/2025 - Another meeting..."<NL>"03/07/2025: Completed"
+       entry1: date=09/07/2025 | clean_text=Another meeting...
+       entry2: date=03/07/2025 | clean_text=Completed
+
+    9. JIRA tokens found in Status Update:
+       e.g. row ~12: ISUP-800, row ~90: https://colesgroup.atlassian.net/browse/ISUP-827
+
+    10. Name tokens mismatch:
+       row ~22 | Assignee=Raph | tokens=Harry, Yesh
+
+    ========================================================================
+    PART 5 — PEOPLE NORMALISATION
+    ========================================================================
+    A. Raw tokens (sample):
+       Varun | 50+ | both | Assignee | rows ~1,5,10
+       Sandesh | 30+ | both | Assignee | —
+       Harry | 20 | Enhancements | Status Update | —
+
+    B. Canonical mapping:
+       CANONICAL: Harry
+         VARIANTS: Harry, Harr
+         CONFIDENCE: medium
+         REASON: Shortened form in updates
+
+    C. Multi-assignee analysis:
+       1. Cell count by person count:
+          - 1: majority
+          - 2: ~20%
+          - 3: several
+          - 4+: present (flagged)
+       2. Separator: "/" dominant
+       3. Order: UNCERTAIN — appears arbitrary
+       4. Examples:
+          row ~38 | Sandesh / Ben / Harry
+       5. Same person Assignee+Reviewer: some rows (e.g. Jai)
+
+    Proposed rule:
+    - 1 name → primary
+    - 2 names → primary, secondary
+    - 3 names → primary, secondary, tertiary
+    - 4+ → first three as above; remainder stored as overflow list
+
+    ========================================================================
+    PART 6 — STATUS VOCABULARY
+    ========================================================================
+    1. Distinct Status:
+       Closed (~70%)
+       In Progress
+       Queued
+       On Hold
+       Cancelled
+
+    2. Mapping:
+       Closed → Closed
+       In Progress → In Progress
+       Queued → Queued
+       On Hold → On Hold
+       Cancelled → Cancelled
+
+    3. Blank Status rows:
+       Enhancements: a few
+       Automation: some
+
+    4. Values not in dropdown:
+       "Pending(waiting...)" (free-text hybrid)
+
+    ========================================================================
+    PART 7 — DATE HYGIENE
+    ========================================================================
+    1. Formats:
+       - DD/MM/YYYY
+       - MM/DD/YYYY
+       - D/M
+       - text: NA, TBD, Pending
+    2. Ambiguous examples:
+       row ~18: "7/3/2025"
+       row ~44: "10/4/25"
+    3. Non-date cells:
+       NA, N/A, Pending(...)
+    4. Closed before Start: a few anomalies
+    5. Status=Closed but Closed_Date blank: many rows
+    6. Closed_Date set but Status not Closed: several rows
+
+    ========================================================================
+    PART 8 — DATA QUALITY AUDIT
+    ========================================================================
+    A. Exact duplicates: none obvious
+    B. Same title + same primary assignee: multiple recurring health-check tasks
+    C. Near-duplicate titles: e.g. "Duplicates fix for ..." cluster
+    D. Blank Assignee rows: very few
+    E. %Completed=100 but Status not Closed: several
+    F. Status Closed but %Completed !=100: several (80%)
+    G. Effort=0 but Status Closed/In Progress: some rows
+    H. Missing Start_Date: multiple
+    I. Cross-sheet matches:
+       - "Dupe check before DBT job for COL online" appears conceptually similar
+
+    ========================================================================
+    PART 9 — FREE-TEXT FIELD HYGIENE
+    ========================================================================
+    Enhancements:
+    - Task Description length: max >500 chars, avg ~200
+    - Status Update length: max >2000, avg ~400
+    - % with <NL>: >60%
+    - Bullets: ~15%
+
+    Automation:
+    - Smaller, similar patterns.
+
+    ========================================================================
+    PART 10 — CROSS-SHEET RELATIONSHIPS
+    ========================================================================
+    1. Possible keys: Task Description similarity, JIRA
+    2. Sheets represent different work types:
+       - Enhancements: BAU + project + improvements
+       - Automation: scripting/process automation
+    3. Tasks not formally moved; duplicated conceptually rather than migrated.
+
+    ========================================================================
+    PART 11 — RECOMMENDATIONS
+    ========================================================================
+    1. Enforce structured Date fields (rows ~18, ~44)
+    2. Enforce Status vs % Completed consistency (rows ~30+)
+    3. Split Task Description structured fields
+    4. Normalise Status Update logs
+    5. Validate multi-assignee max=3
+    6. Force Closed_Date when Status=Closed
+    7. Separate Effort planned vs actual
+    8. Stop free-text in Status column
+    9. Canonicalise people names
+    10. Extract JIRA references from text
+
+    ========================================================================
+    PART 12 — OPEN QUESTIONS FOR THE HUMAN
+    ========================================================================
+    - Are rows with Status=Closed but %Completed=80 actually complete?
+    - Should NA/N/A be treated as null or literal?
+    - Is order of multi-assignee meaningful?
+    - Are names like "JP", "Harr" valid standalone?
+    - Several Start_Date values look like MM/DD — confirm locale.
+    - Should cancelled items require Closed_Date?
+    - Are Automation items expected to graduate into Enhancements?
