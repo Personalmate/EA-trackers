@@ -1,24 +1,100 @@
-    Aiko | 15
-    AIko | 1
-    Akash | 1
-    Anshul | 15
-    Batch Team | 1
-    Ben | 4
-    Benjamin | 1
-    Daniela | 5
-    Dion | 1
-    Ellery | 9
-    Gunjan | 2
-    Haani | 7
-    Harrison | 9
-    Harry | 2
-    Jai | 70
-    JP | 1
-    POppy | 1
-    Ramana | 1
-    Raph | 18
-    Ravi | 15
-    Sandesh | 14
-    Varun | 29
-    Yesh | 1
-    Yeshwenth | 18
+INSERT INTO DB_CORE_PRD.BACKUP_OPS.TEAM_MEMBERS (FULL_NAME, SHORT_NAME, ROLE, ACTIVE_STATUS) VALUES
+  ('Aiko',      'Aiko',      'Contributor', 'Active'),
+  ('Akash',     'Akash',     'Contributor', 'Active'),
+  ('Anshul',    'Anshul',    'Contributor', 'Active'),
+  ('Ben',       'Ben',       'Contributor', 'Active'),
+  ('Daniela',   'Daniela',   'Contributor', 'Active'),
+  ('Dion',      'Dion',      'Contributor', 'Active'),
+  ('Ellery',    'Ellery',    'Contributor', 'Active'),
+  ('Gunjan',    'Gunjan',    'Contributor', 'Active'),
+  ('Haani',     'Haani',     'Contributor', 'Active'),
+  ('Harrison',  'Harrison',  'Contributor', 'Active'),
+  ('Jai',       'Jai',       'Reviewer',    'Active'),
+  ('JP',        'JP',        'Contributor', 'Active'),
+  ('Poppy',     'Poppy',     'Contributor', 'Active'),
+  ('Ramana',    'Ramana',    'Contributor', 'Active'),
+  ('Raph',      'Raph',      'Contributor', 'Active'),
+  ('Ravi',      'Ravi',      'Contributor', 'Active'),
+  ('Sandesh',   'Sandesh',   'Lead',        'Active'),
+  ('Varun',     'Varun',     'Contributor', 'Active'),
+  ('Yeshwenth', 'Yeshwenth', 'Reviewer',    'Active');
+
+
+
+Produce two clean CSV files from this Excel workbook based on the rules below.
+Output each inside its own fenced code block, labelled exactly:
+  "CSV: tasks.csv"
+  "CSV: progress_notes.csv"
+Use standard CSV, double-quote escaping, UTF-8. No commentary.
+
+SCOPE: sheets "Enhancements" and "Automation". Ignore "Release". Ignore column K.
+
+=== CANONICAL NAME MAP ===
+Apply these substitutions when resolving any name token from Assignee,
+Reviewer, or any text field. Case-insensitive match on the left side.
+Tokens not listed below are used as-is.
+
+  aiko          -> Aiko
+  aiko (typo AIko) -> Aiko
+  batch team    -> Aiko
+  benjamin      -> Ben
+  ben           -> Ben
+  harry         -> Harrison
+  harrison      -> Harrison
+  poppy         -> Poppy
+  yesh          -> Yeshwenth
+  yeshwenth     -> Yeshwenth
+
+All other tokens (Akash, Anshul, Daniela, Dion, Ellery, Gunjan, Haani, Jai,
+JP, Ramana, Raph, Ravi, Sandesh, Varun) use the spelling as-is.
+
+If you encounter any name token NOT covered above, emit it verbatim AND
+add "unknown_person: <token>" to import_notes for that row.
+
+=== FILE 1: tasks.csv ===
+One row per Excel data row. Columns in this exact order:
+
+source_sheet,source_row,work_type,title,business_reason,platform_area,reviewer_name,primary_assignee,secondary_assignee,tertiary_assignee,overflow_assignees,start_date,closed_date,status,effort_days,completion_pct,jira_reference,import_notes
+
+Rules:
+- work_type: "Enhancement" for Enhancements sheet, "Automation" for Automation sheet.
+- Task Description parse:
+    * First non-label line before any "Why:/Reason:/Where:/Platform:/System:" label → title.
+    * Content after "Why:" or "Reason:" → business_reason (strip the label).
+    * Content after "Where:" or "Platform:" or "System:" → platform_area.
+    * Other labels (How:, Impact:, What:, When:) → append to business_reason as "<Label>: <text>".
+    * If no labels found, whole cell → title; business_reason and platform_area blank.
+    * Collapse internal newlines inside each field to single spaces.
+- Assignees: split Assignee cell on "/". Trim each. Apply canonical map above.
+    * Position 1 → primary_assignee (required; if blank, leave blank and flag).
+    * Position 2 → secondary_assignee.
+    * Position 3 → tertiary_assignee.
+    * Position 4+ → overflow_assignees (comma-separated canonical names) AND add "4+ assignees in source" to import_notes.
+- reviewer_name: take FIRST name in Reviewer cell after canonical mapping. If multiple present, append "extra reviewers: <rest>" to import_notes.
+- Dates (start_date, closed_date): output DD/MMM/YYYY (e.g. 05/Jul/2025).
+    * Parse DD/MM/YYYY, DD/MMM/YYYY, DD-MMM-YY, and Excel serial numbers.
+    * If format is ambiguous (could be US MM/DD or EU DD/MM, e.g. "7/3/2025"): leave blank and add "<column> ambiguous: <raw value>" to import_notes.
+    * Text values (TBD, NA, Pending, blank): leave blank.
+    * For Status=Closed rows with blank closed_date: leave blank and add "closed but no closed_date" to import_notes. Do NOT guess.
+- status: exact match to Queued / In Progress / On Hold / Closed / Cancelled.
+    * "Pending(...)" or any variant → "On Hold" + add "status was: <raw>" to import_notes.
+    * Anything else → "Queued" + flag.
+- effort_days: numeric; blank or non-numeric → 0 + flag.
+- completion_pct: numeric 0–100. NA → 0. Values ≤ 1 with no "%" treated as literal percent (NOT multiplied by 100).
+- jira_reference: value from the JIRA column if present. If blank, scan Task Description AND every line of Status Update for first match of [A-Z]{2,6}-\d+ OR atlassian.net URL. Use that. If multiple, take first.
+- import_notes: pipe-separated list of all flags for this row. Blank if none.
+
+=== FILE 2: progress_notes.csv ===
+One row per line inside Status Update cells. Columns:
+
+source_sheet,source_row,note_date,note_text
+
+Rules:
+- Split Status Update cell on newlines. Skip empty lines.
+- For each line, match leading date prefix with:
+    ^\s*(\d{1,2}[/\-](\d{1,2}|[A-Za-z]{3})(?:[/\-]\d{2,4})?)\s*[-:]\s*(.+)$
+- If matched: note_date = DD/MMM/YYYY (infer missing year from row's start_date; if still unknown, leave blank and prepend "[year unknown] " to note_text). Strip the date prefix from note_text.
+- If unmatched: note_date blank; note_text = line verbatim.
+- Do NOT drop any non-empty line.
+
+Emit both CSVs only. No other output.
