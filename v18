@@ -1441,4 +1441,4 @@ with tab_enh:
     render_work_type_page("Enhancement")
 
 with tab_auto:
-    render_work_type_page("Automation") 
+    render_work_type_page("Automation")
