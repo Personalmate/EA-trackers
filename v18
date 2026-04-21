@@ -1,6 +1,9 @@
 import re
 import html as _html
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from datetime import date, datetime, timedelta
 from snowflake.snowpark.context import get_active_session
 import streamlit as st
@@ -246,19 +249,7 @@ def resolve_member_id(name, members_df):
     m = members_df[members_df["FULL_NAME"].str.lower() == canon.lower()]
     return int(m["MEMBER_ID"].iloc[0]) if not m.empty else None
 
-SORT_OPTIONS = {
-    "Status then recent update": "CASE t.STATUS WHEN 'In Progress' THEN 1 WHEN 'Queued' THEN 2 WHEN 'On Hold' THEN 3 WHEN 'Closed' THEN 4 WHEN 'Cancelled' THEN 5 ELSE 6 END, t.UPDATED_AT DESC",
-    "Most recently updated":     "t.UPDATED_AT DESC",
-    "Oldest updated":            "t.UPDATED_AT ASC",
-    "Start date (newest)":       "t.START_DATE DESC NULLS LAST",
-    "Start date (oldest)":       "t.START_DATE ASC NULLS LAST",
-    "Effort (high to low)":      "t.EFFORT_DAYS DESC NULLS LAST",
-    "Completion % (high)":       "t.COMPLETION_PCT DESC NULLS LAST",
-    "Completion % (low)":        "t.COMPLETION_PCT ASC NULLS LAST",
-    "Title (A-Z)":               "LOWER(t.TITLE) ASC",
-}
-
-def load_tasks(work_type, status_filter=None, assignee_member_id=None, search=None, sort_by=None):
+def load_tasks(work_type, status_filter=None, assignee_member_id=None, search=None):
     try:
         where = [f"t.WORK_TYPE = '{_safe_sql(work_type)}'"]
         if status_filter and status_filter != "All":
@@ -273,13 +264,15 @@ def load_tasks(work_type, status_filter=None, assignee_member_id=None, search=No
                 "OR LOWER(COALESCE(t.PLATFORM_AREA,'')) LIKE '%{s}%' "
                 "OR LOWER(COALESCE(t.JIRA_REFERENCE,'')) LIKE '%{s}%')".format(s=s)
             )
-        order_clause = SORT_OPTIONS.get(sort_by or "", SORT_OPTIONS["Status then recent update"])
         sql = f"""
             SELECT t.*, r.FULL_NAME AS REVIEWER_NAME
             FROM {TBL_TASKS} t
             LEFT JOIN {TBL_MEMBERS} r ON r.MEMBER_ID = t.REVIEWER_MEMBER_ID
             WHERE {' AND '.join(where)}
-            ORDER BY {order_clause}
+            ORDER BY CASE t.STATUS
+                WHEN 'In Progress' THEN 1 WHEN 'Queued' THEN 2 WHEN 'On Hold' THEN 3
+                WHEN 'Closed' THEN 4 WHEN 'Cancelled' THEN 5 ELSE 6 END,
+                t.UPDATED_AT DESC
         """
         return session.sql(sql).to_pandas()
     except Exception as e:
@@ -599,16 +592,18 @@ if members_df.empty:
 
 current_member_id, current_member_name = resolve_current_member(members_df)
 
+# If CURRENT_USER() didn't match, put a small picker in the sidebar (non-blocking)
 if not current_member_id:
     with st.sidebar:
-        st.markdown("### Who are you?")
-        picker = st.selectbox("Pick your name", [""] + members_df["FULL_NAME"].tolist(), key="user_picker")
+        picker = st.selectbox("Your name", [""] + members_df["FULL_NAME"].tolist(), key="user_picker")
         if picker:
             m = members_df[members_df["FULL_NAME"] == picker]
             if not m.empty:
                 mid = int(m["MEMBER_ID"].iloc[0])
                 st.session_state["current_member_id"]   = mid
                 st.session_state["current_member_name"] = picker
+                current_member_id = mid
+                current_member_name = picker
                 try:
                     sf_user = session.sql("SELECT CURRENT_USER() AS U").to_pandas()["U"].iloc[0]
                     if sf_user:
@@ -618,9 +613,6 @@ if not current_member_id:
                         ).collect()
                 except Exception:
                     pass
-                st.rerun()
-    st.info("Select your name in the sidebar to continue.")
-    st.stop()
 
 
 # ============================================================
@@ -868,15 +860,6 @@ def render_edit_panel(work_type):
 # RENDER: Import section (bottom of each work-type tab)
 # ============================================================
 def render_import_section(work_type):
-    st.markdown(f"""<div class="warning-box">
-        Upload your Excel workbook and pick the sheet that matches <strong>{work_type}</strong>.
-        The app parses Task Description into Title / Why / Where, splits multi-assignee on '/',
-        converts Status Update lines into individual notes, and maps name variants
-        (Harry→Harrison, Yesh→Yeshwenth, AIko→Aiko, Batch Team→Aiko, Benjamin→Ben, POppy→Poppy).
-        Flagged rows (ambiguous dates, 4+ assignees, unknown status) are imported with
-        IMPORT_NOTES so you can fix them in-app.
-    </div>""", unsafe_allow_html=True)
-
     uploaded = st.file_uploader(f"Upload file for {work_type}",
                                 type=["xlsx","xls","csv"], key=f"up_{work_type}")
     if uploaded is None:
@@ -1161,104 +1144,59 @@ def render_import_section(work_type):
 # WORK-TYPE PAGE RENDERER (Enhancements / Automation)
 # ============================================================
 def render_work_type_page(work_type):
-    # Add new task
-    st.markdown(f'<div class="section-label">Add new {work_type} task</div>', unsafe_allow_html=True)
-    with st.form(f"add_form_{work_type}", clear_on_submit=True):
-        c1, c2 = st.columns(2)
-        names = [""] + members_df["FULL_NAME"].tolist()
-        with c1:
-            title    = st.text_input("Task Title *", key=f"nt_title_{work_type}")
-            reason   = st.text_area("Business Reason (Why)", height=80, key=f"nt_reason_{work_type}")
-            platform = st.text_input("Platform / Area (Where)", key=f"nt_plat_{work_type}")
-            primary   = st.selectbox("Primary Assignee *", names, key=f"nt_p_{work_type}")
-            secondary = st.selectbox("Secondary Assignee",  names, key=f"nt_s_{work_type}")
-            tertiary  = st.selectbox("Tertiary Assignee",   names, key=f"nt_t_{work_type}")
-            reviewer  = st.selectbox("Reviewer", names, key=f"nt_r_{work_type}")
-        with c2:
-            start_dt  = st.date_input("Start Date *", value=date.today(), key=f"nt_sd_{work_type}")
-            closed_dt = st.date_input("Closed Date", value=None, key=f"nt_cd_{work_type}")
-            status    = st.selectbox("Status", STATUS_OPTIONS, key=f"nt_st_{work_type}")
-            effort    = st.number_input("Effort (Days)", min_value=0.0, value=0.0, step=0.5, key=f"nt_ef_{work_type}")
-            pct       = st.number_input("Completion %", min_value=0.0, max_value=100.0, value=0.0, step=5.0, key=f"nt_pc_{work_type}")
-            jira      = st.text_input("JIRA / Reference", key=f"nt_jr_{work_type}")
+    # Add new task (collapsible)
+    with st.expander(f"Add new {work_type} task", expanded=False):
+        with st.form(f"add_form_{work_type}", clear_on_submit=True):
+            c1, c2 = st.columns(2)
+            names = [""] + members_df["FULL_NAME"].tolist()
+            with c1:
+                title    = st.text_input("Task Title *", key=f"nt_title_{work_type}")
+                reason   = st.text_area("Business Reason (Why)", height=80, key=f"nt_reason_{work_type}")
+                platform = st.text_input("Platform / Area (Where)", key=f"nt_plat_{work_type}")
+                primary   = st.selectbox("Primary Assignee *", names, key=f"nt_p_{work_type}")
+                secondary = st.selectbox("Secondary Assignee",  names, key=f"nt_s_{work_type}")
+                tertiary  = st.selectbox("Tertiary Assignee",   names, key=f"nt_t_{work_type}")
+                reviewer  = st.selectbox("Reviewer", names, key=f"nt_r_{work_type}")
+            with c2:
+                start_dt  = st.date_input("Start Date *", value=date.today(), key=f"nt_sd_{work_type}")
+                closed_dt = st.date_input("Closed Date", value=None, key=f"nt_cd_{work_type}")
+                status    = st.selectbox("Status", STATUS_OPTIONS, key=f"nt_st_{work_type}")
+                effort    = st.number_input("Effort (Days)", min_value=0.0, value=0.0, step=0.5, key=f"nt_ef_{work_type}")
+                pct       = st.number_input("Completion %", min_value=0.0, max_value=100.0, value=0.0, step=5.0, key=f"nt_pc_{work_type}")
+                jira      = st.text_input("JIRA / Reference", key=f"nt_jr_{work_type}")
 
-        if st.form_submit_button(f"Create {work_type} task", type="primary", use_container_width=True):
-            errs = []
-            if not title.strip(): errs.append("Title required")
-            if not primary: errs.append("Primary assignee required")
-            if status == "Closed" and not closed_dt: errs.append("Closed Date required when status Closed")
-            if closed_dt and closed_dt < start_dt: errs.append("Closed Date cannot precede Start Date")
-            if pct == 100 and status not in ("Closed","Cancelled"): errs.append("100% requires Closed or Cancelled")
-            if errs:
-                for e in errs: st.error(e)
-            else:
-                ok, msg = insert_task(
-                    work_type, title.strip(), reason, platform,
-                    resolve_member_id(reviewer, members_df) if reviewer else None,
-                    start_dt, closed_dt, status, effort, pct, jira, None, None, current_member_id,
-                    resolve_member_id(primary, members_df),
-                    resolve_member_id(secondary, members_df) if secondary else None,
-                    resolve_member_id(tertiary, members_df)  if tertiary  else None,
-                )
-                if ok:
-                    st.session_state["success_message"] = f"{work_type} task created."
-                    st.rerun()
+            if st.form_submit_button(f"Create {work_type} task", type="primary", use_container_width=True):
+                errs = []
+                if not title.strip(): errs.append("Title required")
+                if not primary: errs.append("Primary assignee required")
+                if status == "Closed" and not closed_dt: errs.append("Closed Date required when status Closed")
+                if closed_dt and closed_dt < start_dt: errs.append("Closed Date cannot precede Start Date")
+                if pct == 100 and status not in ("Closed","Cancelled"): errs.append("100% requires Closed or Cancelled")
+                if errs:
+                    for e in errs: st.error(e)
                 else:
-                    st.error(msg)
+                    ok, msg = insert_task(
+                        work_type, title.strip(), reason, platform,
+                        resolve_member_id(reviewer, members_df) if reviewer else None,
+                        start_dt, closed_dt, status, effort, pct, jira, None, None, current_member_id,
+                        resolve_member_id(primary, members_df),
+                        resolve_member_id(secondary, members_df) if secondary else None,
+                        resolve_member_id(tertiary, members_df)  if tertiary  else None,
+                    )
+                    if ok:
+                        st.session_state["success_message"] = f"{work_type} task created."
+                        st.rerun()
+                    else:
+                        st.error(msg)
 
-    # Filters
-    st.markdown('<div class="section-label" style="margin-top:14px;">Existing tasks</div>', unsafe_allow_html=True)
-    fc1, fc2, fc3, fc4 = st.columns([1,1,1.2,1.4])
+    # Filters — status + search
+    fc1, fc2 = st.columns([1, 2])
     with fc1:
         status_f = st.selectbox("Status", ["All"] + STATUS_OPTIONS, key=f"sf_{work_type}")
     with fc2:
-        assignee_name = st.selectbox("Assignee", ["All"] + members_df["FULL_NAME"].tolist(), key=f"af_{work_type}")
-    with fc3:
-        sort_by = st.selectbox("Sort by", list(SORT_OPTIONS.keys()), key=f"sort_{work_type}")
-    with fc4:
-        search = st.text_input("Search (title / reason / platform / JIRA)", key=f"srch_{work_type}")
+        search = st.text_input("Search", key=f"srch_{work_type}", placeholder="title, reason, platform, JIRA...")
 
-    # Quick filter chips
-    qc1, qc2, qc3, qc4 = st.columns(4)
-    quick = st.session_state.get(f"quick_{work_type}", None)
-    with qc1:
-        if st.button("Open only", key=f"q_open_{work_type}", use_container_width=True):
-            st.session_state[f"quick_{work_type}"] = "open"; st.rerun()
-    with qc2:
-        if st.button("Mine", key=f"q_mine_{work_type}", use_container_width=True):
-            st.session_state[f"quick_{work_type}"] = "mine"; st.rerun()
-    with qc3:
-        if st.button("Stale >30d", key=f"q_stale_{work_type}", use_container_width=True):
-            st.session_state[f"quick_{work_type}"] = "stale"; st.rerun()
-    with qc4:
-        if st.button("Clear quick filter", key=f"q_clr_{work_type}", use_container_width=True):
-            st.session_state[f"quick_{work_type}"] = None; st.rerun()
-    if quick:
-        st.caption(f"Quick filter active: **{quick}**")
-
-    assignee_id = resolve_member_id(assignee_name, members_df) if assignee_name != "All" else None
-    tasks_df = load_tasks(work_type, status_filter=status_f, assignee_member_id=assignee_id, search=search, sort_by=sort_by)
-
-    # Apply quick filters post-query
-    if not tasks_df.empty and quick:
-        if quick == "open":
-            tasks_df = tasks_df[tasks_df["STATUS"].isin(OPEN_STATUSES)]
-        elif quick == "mine" and current_member_id:
-            try:
-                mine_ids = session.sql(
-                    f"SELECT TASK_ID FROM {TBL_ASSIGN} WHERE MEMBER_ID={int(current_member_id)}"
-                ).to_pandas()["TASK_ID"].tolist()
-                tasks_df = tasks_df[tasks_df["TASK_ID"].isin(mine_ids)]
-            except Exception as e:
-                st.caption(f"Could not apply 'Mine' filter: {e}")
-        elif quick == "stale":
-            today = date.today()
-            def _is_stale(r):
-                if r["STATUS"] not in OPEN_STATUSES: return False
-                try: sd = pd.to_datetime(r["START_DATE"]).date()
-                except Exception: return False
-                return (today - sd).days > 30
-            tasks_df = tasks_df[tasks_df.apply(_is_stale, axis=1)]
+    tasks_df = load_tasks(work_type, status_filter=status_f, search=search)
 
     if tasks_df.empty:
         st.info(f"No {work_type.lower()} tasks match filters.")
@@ -1267,15 +1205,63 @@ def render_work_type_page(work_type):
         by_tid = {}
         for _, ar in a_df.iterrows():
             by_tid.setdefault(int(ar["TASK_ID"]), []).append((ar["ASSIGNEE_ROLE"], ar["FULL_NAME"]))
-        st.markdown(f'<p class="note-meta">{len(tasks_df)} task(s)</p>', unsafe_allow_html=True)
+
+        # Group tasks by primary assignee
+        person_tasks = {}
         for _, row in tasks_df.iterrows():
-            render_task_card(row, by_tid.get(int(row["TASK_ID"]), []), work_type)
+            tid = int(row["TASK_ID"])
+            assignees = by_tid.get(tid, [])
+            role_order = {"primary": 0, "secondary": 1, "tertiary": 2}
+            a_sorted = sorted(assignees, key=lambda a: role_order.get(a[0], 9))
+            primary_name = a_sorted[0][1] if a_sorted else "Unassigned"
+            person_tasks.setdefault(primary_name, []).append((row, assignees))
+
+        # Sort each person's tasks: open first
+        status_order = {"In Progress": 0, "Queued": 1, "On Hold": 2, "Closed": 3, "Cancelled": 4}
+        for name in person_tasks:
+            person_tasks[name].sort(key=lambda x: status_order.get(x[0].get("STATUS",""), 9))
+
+        # Alphabetical order
+        sorted_people = sorted(person_tasks.keys())
+
+        st.markdown(f'<p class="note-meta">{len(tasks_df)} task(s) across {len(sorted_people)} assignee(s)</p>',
+                    unsafe_allow_html=True)
+
+        # Show selected person's tasks, or prompt to pick one
+        selected = st.session_state.get(f"sel_person_{work_type}", None)
+
+        # Render name buttons in a grid (5 per row)
+        cols_per_row = 5
+        for i in range(0, len(sorted_people), cols_per_row):
+            cols = st.columns(cols_per_row)
+            for j, col in enumerate(cols):
+                idx = i + j
+                if idx >= len(sorted_people):
+                    break
+                name = sorted_people[idx]
+                open_count = sum(1 for r, _ in person_tasks[name] if r.get("STATUS") in OPEN_STATUSES)
+                total = len(person_tasks[name])
+                btn_label = f"{name} ({open_count}/{total})"
+                with col:
+                    if st.button(btn_label, key=f"pb_{work_type}_{name}",
+                                 use_container_width=True):
+                        st.session_state[f"sel_person_{work_type}"] = name
+                        selected = name
+
+        if selected and selected in person_tasks:
+            tasks_list = person_tasks[selected]
+            open_count = sum(1 for r, _ in tasks_list if r.get("STATUS") in OPEN_STATUSES)
+            st.markdown(f'<div class="section-label">{_esc(selected)} — {open_count} open / {len(tasks_list)} total</div>',
+                        unsafe_allow_html=True)
+            for row, assignees in tasks_list:
+                render_task_card(row, assignees, work_type)
+        elif not selected:
+            st.caption("Click a name above to view their tasks.")
 
     render_edit_panel(work_type)
 
-    st.markdown("---")
-    st.markdown(f'<div class="section-label">Import {work_type} data from Excel</div>', unsafe_allow_html=True)
-    render_import_section(work_type)
+    with st.expander(f"Import {work_type} data from Excel / CSV", expanded=False):
+        render_import_section(work_type)
 
 
 # ============================================================
@@ -1324,49 +1310,79 @@ def render_stats_page():
 
     st.markdown('<div class="section-label" style="margin-top:16px;">Charts</div>', unsafe_allow_html=True)
 
+    CHART_BG    = "#0e1117"
+    CHART_TEXT  = "#fafafa"
+    CHART_GRID  = "#2a3040"
+    CHART_BLUE  = "#3b82f6"
+    CHART_TEAL  = "#14b8a6"
+    STATUS_COLORS = {"Queued":"#94a3b8","In Progress":"#60a5fa","On Hold":"#fbbf24",
+                     "Closed":"#4ade80","Cancelled":"#f87171"}
+
+    def _style_ax(ax, fig):
+        fig.patch.set_facecolor(CHART_BG)
+        ax.set_facecolor(CHART_BG)
+        ax.tick_params(colors=CHART_TEXT, labelsize=9)
+        ax.xaxis.label.set_color(CHART_TEXT)
+        ax.yaxis.label.set_color(CHART_TEXT)
+        ax.title.set_color(CHART_TEXT)
+        for spine in ax.spines.values():
+            spine.set_color(CHART_GRID)
+
     # Chart 1 & 2
     ch1, ch2 = st.columns(2)
 
-    # Chart 1: Status distribution (all tasks, stacked by work_type)
+    # Chart 1: Status distribution (stacked by work type), sorted desc
     with ch1:
-        st.markdown("**Status distribution (by work type)**")
         try:
             piv = tasks.pivot_table(index="STATUS", columns="WORK_TYPE",
                                     values="TASK_ID", aggfunc="count", fill_value=0)
             piv = piv.reindex(STATUS_OPTIONS).fillna(0)
-            # Ensure both work-type columns always present for stable color mapping
             for wt in ["Enhancement","Automation"]:
                 if wt not in piv.columns: piv[wt] = 0
             piv = piv[["Enhancement","Automation"]]
-            st.bar_chart(piv, horizontal=True, stack=True,
-                         color=["#3b82f6","#14b8a6"], height=320)
+            piv["_total"] = piv.sum(axis=1)
+            piv = piv.sort_values("_total", ascending=True)
+            piv = piv.drop(columns=["_total"])
+            fig, ax = plt.subplots(figsize=(6, 4))
+            piv.plot.barh(stacked=True, ax=ax, color=[CHART_BLUE, CHART_TEAL], edgecolor="none")
+            ax.set_title("Status Distribution (by work type)", fontsize=11, fontweight="bold", pad=10)
+            ax.set_xlabel("Tasks")
+            ax.set_ylabel("")
+            ax.legend(fontsize=8, facecolor=CHART_BG, edgecolor=CHART_GRID, labelcolor=CHART_TEXT)
+            _style_ax(ax, fig)
+            fig.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
         except Exception as e:
             st.caption(f"Chart error: {e}")
 
-    # Chart 2: Effort by primary assignee (top 10)
+    # Chart 2: Effort by primary assignee (top 10), sorted desc
     with ch2:
-        st.markdown("**Effort days by primary assignee (top 10)**")
         try:
             primary = assigns[assigns["ASSIGNEE_ROLE"] == "primary"].merge(
                 tasks[["TASK_ID","EFFORT_DAYS"]], on="TASK_ID", how="left")
             primary["EFFORT_DAYS"] = pd.to_numeric(primary["EFFORT_DAYS"], errors="coerce").fillna(0)
             grp = primary.groupby("FULL_NAME")["EFFORT_DAYS"].sum().sort_values(ascending=True).tail(10)
-            df = grp.reset_index()
-            df.columns = ["Person", "Effort (Days)"]
-            if df.empty:
+            if grp.empty:
                 st.info("No effort data yet.")
             else:
-                st.bar_chart(df.set_index("Person"), horizontal=True,
-                             color="#3b82f6", height=320)
+                fig, ax = plt.subplots(figsize=(6, 4))
+                ax.barh(grp.index, grp.values, color=CHART_BLUE, edgecolor="none")
+                ax.set_title("Effort Days by Assignee (top 10)", fontsize=11, fontweight="bold", pad=10)
+                ax.set_xlabel("Days")
+                ax.set_ylabel("")
+                _style_ax(ax, fig)
+                fig.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
         except Exception as e:
             st.caption(f"Chart error: {e}")
 
     # Chart 3 & 4
     ch3, ch4 = st.columns(2)
 
-    # Chart 3: Open tasks per person (stacked by status)
+    # Chart 3: Open tasks per person (stacked by status), sorted desc
     with ch3:
-        st.markdown("**Open tasks per primary assignee**")
         try:
             primary = assigns[assigns["ASSIGNEE_ROLE"] == "primary"].merge(
                 tasks[["TASK_ID","STATUS"]], on="TASK_ID", how="left")
@@ -1375,19 +1391,29 @@ def render_stats_page():
                 piv = open_df.pivot_table(index="FULL_NAME", columns="STATUS",
                                           values="TASK_ID", aggfunc="count", fill_value=0)
                 for s in OPEN_STATUSES:
-                    if s not in piv.columns:
-                        piv[s] = 0
-                piv = piv[OPEN_STATUSES].sort_values(OPEN_STATUSES, ascending=True)
-                st.bar_chart(piv, horizontal=True, stack=True,
-                             color=["#60a5fa","#a78bfa","#fbbf24"], height=320)
+                    if s not in piv.columns: piv[s] = 0
+                piv = piv[OPEN_STATUSES]
+                piv["_total"] = piv.sum(axis=1)
+                piv = piv.sort_values("_total", ascending=True)
+                piv = piv.drop(columns=["_total"])
+                fig, ax = plt.subplots(figsize=(6, 4))
+                colors = [STATUS_COLORS.get(s, "#888") for s in OPEN_STATUSES]
+                piv.plot.barh(stacked=True, ax=ax, color=colors, edgecolor="none")
+                ax.set_title("Open Tasks per Assignee", fontsize=11, fontweight="bold", pad=10)
+                ax.set_xlabel("Tasks")
+                ax.set_ylabel("")
+                ax.legend(fontsize=8, facecolor=CHART_BG, edgecolor=CHART_GRID, labelcolor=CHART_TEXT)
+                _style_ax(ax, fig)
+                fig.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
             else:
                 st.info("No open tasks.")
         except Exception as e:
             st.caption(f"Chart error: {e}")
 
-    # Chart 4: Monthly closure throughput (last 6 months)
+    # Chart 4: Monthly closure throughput (last 6 months), sorted by date
     with ch4:
-        st.markdown("**Closed tasks per month (last 6 months)**")
         try:
             closed_df = tasks[(tasks["STATUS"] == "Closed") & (tasks["_CLOSED"].notna())].copy()
             if not closed_df.empty:
@@ -1398,9 +1424,21 @@ def render_stats_page():
                 for wt in ["Enhancement","Automation"]:
                     if wt not in by_month.columns: by_month[wt] = 0
                 by_month = by_month[["Enhancement","Automation"]].sort_index()
-                by_month.index = [d.strftime("%b %Y") for d in by_month.index]
-                st.bar_chart(by_month, color=["#3b82f6","#14b8a6"],
-                             stack=True, height=320)
+                labels = [d.strftime("%b %Y") for d in by_month.index]
+                fig, ax = plt.subplots(figsize=(6, 4))
+                x = range(len(labels))
+                ax.bar(x, by_month["Enhancement"], label="Enhancement", color=CHART_BLUE, edgecolor="none")
+                ax.bar(x, by_month["Automation"], bottom=by_month["Enhancement"],
+                       label="Automation", color=CHART_TEAL, edgecolor="none")
+                ax.set_xticks(x)
+                ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=8)
+                ax.set_title("Closed Tasks per Month", fontsize=11, fontweight="bold", pad=10)
+                ax.set_ylabel("Tasks")
+                ax.legend(fontsize=8, facecolor=CHART_BG, edgecolor=CHART_GRID, labelcolor=CHART_TEXT)
+                _style_ax(ax, fig)
+                fig.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
             else:
                 st.info("No closed tasks yet.")
         except Exception as e:
@@ -1447,14 +1485,14 @@ def render_danger_zone():
 # ============================================================
 # TABS
 # ============================================================
-tab_enh, tab_auto, tab_stats = st.tabs(["ENHANCEMENTS", "AUTOMATION", "STATS"])
+tab_stats, tab_enh, tab_auto = st.tabs(["STATS", "ENHANCEMENTS", "AUTOMATION"])
+
+with tab_stats:
+    render_stats_page()
+    render_danger_zone()
 
 with tab_enh:
     render_work_type_page("Enhancement")
 
 with tab_auto:
     render_work_type_page("Automation")
-
-with tab_stats:
-    render_stats_page()
-    render_danger_zone()
