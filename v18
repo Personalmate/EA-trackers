@@ -886,11 +886,7 @@ def render_import_section(work_type):
     is_csv = fname.endswith(".csv")
 
     if is_csv:
-        # CSV path — no openpyxl needed; try utf-8 first, fall back to cp1252/latin1
         try:
-            raw = pd.read_csv(uploaded, encoding="utf-8")
-        except UnicodeDecodeError:
-            uploaded.seek(0)
             raw = pd.read_csv(uploaded, encoding="cp1252")
         except Exception as e:
             st.error(f"Cannot read CSV: {e}")
