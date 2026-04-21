@@ -927,12 +927,18 @@ def render_import_section(work_type):
     st.markdown('<div class="section-label">Column Mapping</div>', unsafe_allow_html=True)
 
     file_cols = ["-- skip --"] + list(raw.columns.astype(str))
-    def _auto(needle):
+    def _auto(needle, exclude=None):
         for c in raw.columns:
-            if str(c).lower().strip() == needle:
+            cname = str(c).lower().strip()
+            if cname == needle:
+                if exclude and any(ex in cname for ex in exclude):
+                    continue
                 return str(c)
         for c in raw.columns:
-            if needle in str(c).lower():
+            cname = str(c).lower().strip()
+            if needle in cname:
+                if exclude and any(ex in cname for ex in exclude):
+                    continue
                 return str(c)
         return "-- skip --"
 
@@ -967,7 +973,7 @@ def render_import_section(work_type):
                                 index=file_cols.index(_auto("status update")) if _auto("status update") in file_cols else 0,
                                 key=f"m_upd_{work_type}")
         m_closed = st.selectbox("Closed Date", file_cols,
-                                index=file_cols.index(_auto("closed")) if _auto("closed") in file_cols else 0,
+                                index=file_cols.index(_auto("closed", exclude=["status"])) if _auto("closed", exclude=["status"]) in file_cols else 0,
                                 key=f"m_closed_{work_type}")
 
     def _g(row, col):
@@ -1007,21 +1013,20 @@ def render_import_section(work_type):
             start_dt, sd_amb = parse_flexible_date(sd_raw)
             if sd_raw and not start_dt:
                 flags.append(f"start date unparseable: {sd_raw}")
-            elif sd_amb:
-                flags.append(f"start date ambiguous: {sd_raw}")
 
             cd_raw = _g(row, m_closed)
-            closed_dt, cd_amb = parse_flexible_date(cd_raw, fallback_year=(start_dt.year if start_dt else None))
-            if cd_raw and not closed_dt:
-                flags.append(f"closed date unparseable: {cd_raw}")
-            elif cd_amb:
-                flags.append(f"closed date ambiguous: {cd_raw}")
+            # If the "closed date" value is actually a status string, ignore it
+            if cd_raw and str(cd_raw).strip() in STATUS_OPTIONS:
+                cd_raw = None
+            closed_dt = None
+            if cd_raw:
+                closed_dt, _ = parse_flexible_date(cd_raw, fallback_year=(start_dt.year if start_dt else None))
+                if not closed_dt:
+                    flags.append(f"closed date unparseable: {cd_raw}")
 
             status, status_flag = map_status(_g(row, m_status))
             if status_flag:
                 flags.append(status_flag)
-            if status == "Closed" and not closed_dt:
-                flags.append("closed but no closed_date")
 
             try:
                 effort = float(_g(row, m_eff) or 0)
@@ -1046,6 +1051,11 @@ def render_import_section(work_type):
 
             notes = parse_status_update(_g(row, m_upd), row_start_date=start_dt)
             total_notes += len(notes)
+
+            # Auto-set closed_date for Closed tasks: use latest note date, else today
+            if status == "Closed" and not closed_dt:
+                note_dates = [nd for nd, _ in notes if nd is not None]
+                closed_dt = max(note_dates) if note_dates else date.today()
 
             preview.append({
                 "_row": idx + 2,  # excel row number (header is row 1)
