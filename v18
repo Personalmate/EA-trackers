@@ -1,9 +1,6 @@
 import re
 import html as _html
 import pandas as pd
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 from datetime import date, datetime, timedelta
 from snowflake.snowpark.context import get_active_session
 import streamlit as st
@@ -1310,29 +1307,12 @@ def render_stats_page():
 
     st.markdown('<div class="section-label" style="margin-top:16px;">Charts</div>', unsafe_allow_html=True)
 
-    CHART_BG    = "#0e1117"
-    CHART_TEXT  = "#fafafa"
-    CHART_GRID  = "#2a3040"
-    CHART_BLUE  = "#3b82f6"
-    CHART_TEAL  = "#14b8a6"
-    STATUS_COLORS = {"Queued":"#94a3b8","In Progress":"#60a5fa","On Hold":"#fbbf24",
-                     "Closed":"#4ade80","Cancelled":"#f87171"}
-
-    def _style_ax(ax, fig):
-        fig.patch.set_facecolor(CHART_BG)
-        ax.set_facecolor(CHART_BG)
-        ax.tick_params(colors=CHART_TEXT, labelsize=9)
-        ax.xaxis.label.set_color(CHART_TEXT)
-        ax.yaxis.label.set_color(CHART_TEXT)
-        ax.title.set_color(CHART_TEXT)
-        for spine in ax.spines.values():
-            spine.set_color(CHART_GRID)
-
     # Chart 1 & 2
     ch1, ch2 = st.columns(2)
 
-    # Chart 1: Status distribution (stacked by work type), sorted desc
+    # Chart 1: Status distribution (stacked by work type)
     with ch1:
+        st.markdown("**Status Distribution (by work type)**")
         try:
             piv = tasks.pivot_table(index="STATUS", columns="WORK_TYPE",
                                     values="TASK_ID", aggfunc="count", fill_value=0)
@@ -1341,23 +1321,15 @@ def render_stats_page():
                 if wt not in piv.columns: piv[wt] = 0
             piv = piv[["Enhancement","Automation"]]
             piv["_total"] = piv.sum(axis=1)
-            piv = piv.sort_values("_total", ascending=True)
-            piv = piv.drop(columns=["_total"])
-            fig, ax = plt.subplots(figsize=(6, 4))
-            piv.plot.barh(stacked=True, ax=ax, color=[CHART_BLUE, CHART_TEAL], edgecolor="none")
-            ax.set_title("Status Distribution (by work type)", fontsize=11, fontweight="bold", pad=10)
-            ax.set_xlabel("Tasks")
-            ax.set_ylabel("")
-            ax.legend(fontsize=8, facecolor=CHART_BG, edgecolor=CHART_GRID, labelcolor=CHART_TEXT)
-            _style_ax(ax, fig)
-            fig.tight_layout()
-            st.pyplot(fig)
-            plt.close(fig)
+            piv = piv.sort_values("_total", ascending=True).drop(columns=["_total"])
+            st.bar_chart(piv, horizontal=True, stack=True,
+                         color=["#3b82f6","#14b8a6"], height=350)
         except Exception as e:
             st.caption(f"Chart error: {e}")
 
-    # Chart 2: Effort by primary assignee (top 10), sorted desc
+    # Chart 2: Effort by primary assignee (top 10)
     with ch2:
+        st.markdown("**Effort Days by Assignee (top 10)**")
         try:
             primary = assigns[assigns["ASSIGNEE_ROLE"] == "primary"].merge(
                 tasks[["TASK_ID","EFFORT_DAYS"]], on="TASK_ID", how="left")
@@ -1366,23 +1338,19 @@ def render_stats_page():
             if grp.empty:
                 st.info("No effort data yet.")
             else:
-                fig, ax = plt.subplots(figsize=(6, 4))
-                ax.barh(grp.index, grp.values, color=CHART_BLUE, edgecolor="none")
-                ax.set_title("Effort Days by Assignee (top 10)", fontsize=11, fontweight="bold", pad=10)
-                ax.set_xlabel("Days")
-                ax.set_ylabel("")
-                _style_ax(ax, fig)
-                fig.tight_layout()
-                st.pyplot(fig)
-                plt.close(fig)
+                df = grp.reset_index()
+                df.columns = ["Person", "Effort (Days)"]
+                st.bar_chart(df.set_index("Person"), horizontal=True,
+                             color="#3b82f6", height=350)
         except Exception as e:
             st.caption(f"Chart error: {e}")
 
     # Chart 3 & 4
     ch3, ch4 = st.columns(2)
 
-    # Chart 3: Open tasks per person (stacked by status), sorted desc
+    # Chart 3: Open tasks per person (stacked by status)
     with ch3:
+        st.markdown("**Open Tasks per Assignee**")
         try:
             primary = assigns[assigns["ASSIGNEE_ROLE"] == "primary"].merge(
                 tasks[["TASK_ID","STATUS"]], on="TASK_ID", how="left")
@@ -1394,26 +1362,17 @@ def render_stats_page():
                     if s not in piv.columns: piv[s] = 0
                 piv = piv[OPEN_STATUSES]
                 piv["_total"] = piv.sum(axis=1)
-                piv = piv.sort_values("_total", ascending=True)
-                piv = piv.drop(columns=["_total"])
-                fig, ax = plt.subplots(figsize=(6, 4))
-                colors = [STATUS_COLORS.get(s, "#888") for s in OPEN_STATUSES]
-                piv.plot.barh(stacked=True, ax=ax, color=colors, edgecolor="none")
-                ax.set_title("Open Tasks per Assignee", fontsize=11, fontweight="bold", pad=10)
-                ax.set_xlabel("Tasks")
-                ax.set_ylabel("")
-                ax.legend(fontsize=8, facecolor=CHART_BG, edgecolor=CHART_GRID, labelcolor=CHART_TEXT)
-                _style_ax(ax, fig)
-                fig.tight_layout()
-                st.pyplot(fig)
-                plt.close(fig)
+                piv = piv.sort_values("_total", ascending=True).drop(columns=["_total"])
+                st.bar_chart(piv, horizontal=True, stack=True,
+                             color=["#60a5fa","#a78bfa","#fbbf24"], height=350)
             else:
                 st.info("No open tasks.")
         except Exception as e:
             st.caption(f"Chart error: {e}")
 
-    # Chart 4: Monthly closure throughput (last 6 months), sorted by date
+    # Chart 4: Monthly closure throughput (last 6 months)
     with ch4:
+        st.markdown("**Closed Tasks per Month (last 6 months)**")
         try:
             closed_df = tasks[(tasks["STATUS"] == "Closed") & (tasks["_CLOSED"].notna())].copy()
             if not closed_df.empty:
@@ -1424,21 +1383,8 @@ def render_stats_page():
                 for wt in ["Enhancement","Automation"]:
                     if wt not in by_month.columns: by_month[wt] = 0
                 by_month = by_month[["Enhancement","Automation"]].sort_index()
-                labels = [d.strftime("%b %Y") for d in by_month.index]
-                fig, ax = plt.subplots(figsize=(6, 4))
-                x = range(len(labels))
-                ax.bar(x, by_month["Enhancement"], label="Enhancement", color=CHART_BLUE, edgecolor="none")
-                ax.bar(x, by_month["Automation"], bottom=by_month["Enhancement"],
-                       label="Automation", color=CHART_TEAL, edgecolor="none")
-                ax.set_xticks(x)
-                ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=8)
-                ax.set_title("Closed Tasks per Month", fontsize=11, fontweight="bold", pad=10)
-                ax.set_ylabel("Tasks")
-                ax.legend(fontsize=8, facecolor=CHART_BG, edgecolor=CHART_GRID, labelcolor=CHART_TEXT)
-                _style_ax(ax, fig)
-                fig.tight_layout()
-                st.pyplot(fig)
-                plt.close(fig)
+                by_month.index = [d.strftime("%b %Y") for d in by_month.index]
+                st.bar_chart(by_month, stack=True, color=["#3b82f6","#14b8a6"], height=350)
             else:
                 st.info("No closed tasks yet.")
         except Exception as e:
