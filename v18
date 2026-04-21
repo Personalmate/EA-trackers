@@ -1,0 +1,1451 @@
+import re
+import html as _html
+import pandas as pd
+from datetime import date, datetime, timedelta
+from snowflake.snowpark.context import get_active_session
+import streamlit as st
+
+
+# ============================================================
+# CONSTANTS
+# ============================================================
+SCHEMA       = "DB_CORE_PRD.BACKUP_OPS"
+TBL_MEMBERS  = f"{SCHEMA}.TEAM_MEMBERS"
+TBL_TASKS    = f"{SCHEMA}.TASKS_V2"
+TBL_ASSIGN   = f"{SCHEMA}.TASK_ASSIGNEES"
+TBL_NOTES    = f"{SCHEMA}.PROGRESS_NOTES_V2"
+
+STATUS_OPTIONS = ["Queued", "In Progress", "On Hold", "Closed", "Cancelled"]
+OPEN_STATUSES  = ["Queued", "In Progress", "On Hold"]
+
+CANONICAL_NAMES = {
+    "aiko": "Aiko", "batch team": "Aiko",
+    "akash": "Akash",
+    "anshul": "Anshul",
+    "ben": "Ben", "benjamin": "Ben",
+    "daniela": "Daniela",
+    "dion": "Dion",
+    "ellery": "Ellery",
+    "gunjan": "Gunjan",
+    "haani": "Haani",
+    "harrison": "Harrison", "harry": "Harrison",
+    "jai": "Jai",
+    "jp": "JP",
+    "poppy": "Poppy",
+    "ramana": "Ramana",
+    "raph": "Raph",
+    "ravi": "Ravi",
+    "sandesh": "Sandesh",
+    "varun": "Varun",
+    "yesh": "Yeshwenth", "yeshwenth": "Yeshwenth",
+}
+
+def canonical_name(raw):
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    return CANONICAL_NAMES.get(s.lower(), s)
+
+
+# ============================================================
+# PAGE CONFIG + CSS (dark theme, compact)
+# ============================================================
+st.set_page_config(layout="wide", page_title="Team Effort Tracker")
+
+st.markdown("""<style>
+* { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+html, body, [data-testid="stApp"], [data-testid="stAppViewContainer"],
+[data-testid="stHeader"], [data-testid="stMain"], .main, .block-container,
+[data-testid="stMainBlockContainer"], [data-testid="stVerticalBlock"],
+[data-testid="stHorizontalBlock"], [data-testid="stForm"],
+section[data-testid="stSidebar"], [data-testid="stSidebarContent"] {
+    background-color: #0e1117 !important; color: #fafafa !important;
+}
+[data-testid="stSidebar"] { background-color: #161b22 !important; }
+
+p, span, label, div, li, h1, h2, h3, h4, h5, h6, strong, em, small, td, th,
+[data-testid="stMarkdown"] *, [data-testid="stWidgetLabel"] * { color: #fafafa !important; }
+
+[data-testid="stSelectbox"] > div > div, [data-baseweb="select"] > div,
+textarea, input, [data-testid="stTextArea"] textarea,
+[data-testid="stTextInput"] input, [data-testid="stNumberInput"] input,
+[data-testid="stDateInput"] input {
+    background-color: #1c2030 !important; color: #fafafa !important;
+    border-color: #3a3f52 !important; border-radius: 6px !important;
+}
+input:focus, textarea:focus { border-color: #3b82f6 !important; box-shadow: 0 0 0 1px #3b82f6 !important; }
+
+[data-baseweb="popover"], [data-baseweb="menu"], [data-baseweb="menu"] li,
+ul[role="listbox"], ul[role="listbox"] li, [role="option"] {
+    background-color: #1c2030 !important; color: #fafafa !important;
+}
+[role="option"]:hover, ul[role="listbox"] li:hover { background-color: #2a3040 !important; }
+[data-baseweb="select"] svg { fill: #fafafa !important; }
+
+[data-testid="stTabs"] button {
+    background-color: transparent !important; color: #8b95a5 !important;
+    font-weight: 600 !important; font-size: 15px !important;
+    letter-spacing: 0.3px !important; padding: 10px 22px !important;
+    text-transform: uppercase !important;
+}
+[data-testid="stTabs"] button[aria-selected="true"] { color: #fafafa !important; border-bottom: 3px solid #3b82f6 !important; }
+
+button { background-color: #1c2030 !important; color: #fafafa !important; border-color: #3a3f52 !important; border-radius: 6px !important; }
+button:hover { background-color: #2a3040 !important; }
+[data-testid="baseButton-primary"], [data-testid="stFormSubmitButton"] button {
+    background: linear-gradient(135deg, #3b82f6, #2563eb) !important; color: #fff !important; border: none !important;
+}
+[data-testid="stForm"] [data-testid="stFormSubmitButton"] button {
+    background: linear-gradient(135deg, #238636, #1a7f37) !important;
+}
+
+[data-testid="stExpander"] { background-color: #161b22 !important; border: 1px solid #2a3040 !important; border-radius: 8px !important; margin-bottom: 6px !important; }
+[data-testid="stExpander"] summary { color: #fafafa !important; }
+[data-testid="stDataFrame"] > div {
+    background-color: #161b22 !important;
+    --gdg-bg-cell: #161b22 !important; --gdg-bg-header: #1c2030 !important;
+    --gdg-text-dark: #fafafa !important; --gdg-text-header: #8b95a5 !important;
+    --gdg-border-color: #2a3040 !important; --gdg-accent-color: #3b82f6 !important;
+}
+
+.header-container {
+    background: linear-gradient(135deg, #0f2744 0%, #1a3a5c 50%, #1e4976 100%);
+    border-radius: 12px; padding: 18px 24px; margin-bottom: 16px; text-align: center;
+}
+.header-title { font-size: 24px; font-weight: 700; color: #fff; margin: 0; }
+.header-sub { font-size: 12px; color: #8bacc7; margin: 4px 0 0 0; }
+
+.section-label {
+    font-size: 11px; font-weight: 600; color: #3b82f6 !important; text-transform: uppercase;
+    letter-spacing: 1px; margin: 12px 0 8px 0; padding-bottom: 4px; border-bottom: 1px solid #2a3040;
+}
+
+.metric-card { background: #161b22; border: 1px solid #2a3040; border-radius: 10px; padding: 14px 18px; text-align: center; }
+.metric-value { font-size: 26px; font-weight: 700; margin: 0; }
+.metric-label { font-size: 11px; color: #8b95a5 !important; margin: 4px 0 0 0; text-transform: uppercase; letter-spacing: 0.6px; }
+.mc-blue  { border-left: 3px solid #3b82f6; } .mc-blue .metric-value  { color: #3b82f6 !important; }
+.mc-green { border-left: 3px solid #22c55e; } .mc-green .metric-value { color: #22c55e !important; }
+.mc-amber { border-left: 3px solid #f59e0b; } .mc-amber .metric-value { color: #f59e0b !important; }
+.mc-red   { border-left: 3px solid #ef4444; } .mc-red .metric-value   { color: #ef4444 !important; }
+.mc-purple{ border-left: 3px solid #a78bfa; } .mc-purple .metric-value{ color: #a78bfa !important; }
+.mc-teal  { border-left: 3px solid #14b8a6; } .mc-teal .metric-value  { color: #14b8a6 !important; }
+
+.status-badge { display:inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+.status-queued     { background:#1e293b; color:#94a3b8; }
+.status-inprogress { background:#172554; color:#60a5fa; }
+.status-onhold     { background:#451a03; color:#fbbf24; }
+.status-closed     { background:#052e16; color:#4ade80; }
+.status-cancelled  { background:#450a0a; color:#f87171; }
+
+.success-box { background:#0d2818; border-left:4px solid #238636; border-radius:6px; padding:10px 14px; color:#7ee787; margin: 8px 0; }
+.warning-box { background:#2d1b00; border-left:4px solid #f59e0b; border-radius:6px; padding:10px 14px; color:#fbbf24; margin: 8px 0; }
+.error-box   { background:#2d0a0a; border-left:4px solid #ef4444; border-radius:6px; padding:10px 14px; color:#fca5a5; margin: 8px 0; }
+
+.note-card { background:#1c2030; border-left:3px solid #3b82f6; border-radius:0 6px 6px 0; padding:8px 12px; margin-bottom:6px; }
+.note-meta { font-size:11px; color:#8b95a5 !important; }
+.note-text { font-size:13px; color:#e6edf3 !important; }
+
+.task-meta { display:flex; gap:18px; flex-wrap:wrap; margin:4px 0; }
+.task-meta-item { font-size:12px; color:#8b95a5; }
+.task-meta-item strong { color:#c0c8d4 !important; }
+
+.progress-outer { background:#1c2030; border-radius:6px; height:6px; width:100%; overflow:hidden; margin: 4px 0; }
+.progress-inner { height:100%; border-radius:6px; }
+.main .block-container { padding-top: 1rem; padding-bottom: 1rem; max-width: 100%; }
+</style>""", unsafe_allow_html=True)
+
+
+# ============================================================
+# SESSION
+# ============================================================
+try:
+    session = get_active_session()
+except Exception:
+    session = None
+
+_defaults = {
+    "success_message": None,
+    "edit_task_id": None,
+    "delete_task_id": None,
+    "delete_confirm": False,
+    "current_member_id": None,
+    "current_member_name": None,
+    "import_preview": {},   # keyed by work_type
+}
+for _k, _v in _defaults.items():
+    if _k not in st.session_state:
+        st.session_state[_k] = _v
+
+
+# ============================================================
+# SMALL HELPERS
+# ============================================================
+def _esc(v):
+    return "" if v is None else _html.escape(str(v))
+
+def _safe_sql(v):
+    return "" if v is None else str(v).replace("'", "''")
+
+def _sql_str(v):
+    if v is None or (isinstance(v, float) and pd.isna(v)) or str(v).strip() == "":
+        return "NULL"
+    return f"'{_safe_sql(v)}'"
+
+def _sql_date(v):
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return "NULL"
+    if isinstance(v, datetime):
+        return f"'{v.strftime('%Y-%m-%d')}'"
+    if isinstance(v, date):
+        return f"'{v.strftime('%Y-%m-%d')}'"
+    return f"'{_safe_sql(v)}'"
+
+def _sql_num(v, default=0):
+    try:
+        f = float(v)
+        if pd.isna(f): return str(default)
+        return str(f)
+    except Exception:
+        return str(default)
+
+def _status_badge(s):
+    cls = {"Queued":"status-queued","In Progress":"status-inprogress","On Hold":"status-onhold",
+           "Closed":"status-closed","Cancelled":"status-cancelled"}.get(s, "status-queued")
+    return f'<span class="status-badge {cls}">{_esc(s)}</span>'
+
+def _metric_card(value, label, color="blue"):
+    return f'<div class="metric-card mc-{color}"><p class="metric-value">{_esc(value)}</p><p class="metric-label">{_esc(label)}</p></div>'
+
+def _progress_html(pct):
+    pct = max(0, min(100, float(pct or 0)))
+    color = "#22c55e" if pct >= 100 else "#3b82f6" if pct >= 60 else "#f59e0b" if pct >= 30 else "#ef4444"
+    return f'<div class="progress-outer"><div class="progress-inner" style="width:{pct}%;background:{color};"></div></div>'
+
+
+# ============================================================
+# DATA ACCESS
+# ============================================================
+def load_members():
+    try:
+        return session.sql(
+            f"SELECT MEMBER_ID, FULL_NAME, SHORT_NAME, SNOWFLAKE_USER, ROLE "
+            f"FROM {TBL_MEMBERS} WHERE ACTIVE_STATUS='Active' ORDER BY FULL_NAME"
+        ).to_pandas()
+    except Exception as e:
+        st.error(f"Could not load TEAM_MEMBERS: {e}")
+        return pd.DataFrame()
+
+def resolve_member_id(name, members_df):
+    if not name or members_df.empty:
+        return None
+    canon = canonical_name(name)
+    if not canon:
+        return None
+    m = members_df[members_df["FULL_NAME"].str.lower() == canon.lower()]
+    return int(m["MEMBER_ID"].iloc[0]) if not m.empty else None
+
+SORT_OPTIONS = {
+    "Status then recent update": "CASE t.STATUS WHEN 'In Progress' THEN 1 WHEN 'Queued' THEN 2 WHEN 'On Hold' THEN 3 WHEN 'Closed' THEN 4 WHEN 'Cancelled' THEN 5 ELSE 6 END, t.UPDATED_AT DESC",
+    "Most recently updated":     "t.UPDATED_AT DESC",
+    "Oldest updated":            "t.UPDATED_AT ASC",
+    "Start date (newest)":       "t.START_DATE DESC NULLS LAST",
+    "Start date (oldest)":       "t.START_DATE ASC NULLS LAST",
+    "Effort (high to low)":      "t.EFFORT_DAYS DESC NULLS LAST",
+    "Completion % (high)":       "t.COMPLETION_PCT DESC NULLS LAST",
+    "Completion % (low)":        "t.COMPLETION_PCT ASC NULLS LAST",
+    "Title (A-Z)":               "LOWER(t.TITLE) ASC",
+}
+
+def load_tasks(work_type, status_filter=None, assignee_member_id=None, search=None, sort_by=None):
+    try:
+        where = [f"t.WORK_TYPE = '{_safe_sql(work_type)}'"]
+        if status_filter and status_filter != "All":
+            where.append(f"t.STATUS = '{_safe_sql(status_filter)}'")
+        if assignee_member_id:
+            where.append(f"t.TASK_ID IN (SELECT TASK_ID FROM {TBL_ASSIGN} WHERE MEMBER_ID={int(assignee_member_id)})")
+        if search and search.strip():
+            s = _safe_sql(search.strip().lower())
+            where.append(
+                "(LOWER(COALESCE(t.TITLE,'')) LIKE '%{s}%' "
+                "OR LOWER(COALESCE(t.BUSINESS_REASON,'')) LIKE '%{s}%' "
+                "OR LOWER(COALESCE(t.PLATFORM_AREA,'')) LIKE '%{s}%' "
+                "OR LOWER(COALESCE(t.JIRA_REFERENCE,'')) LIKE '%{s}%')".format(s=s)
+            )
+        order_clause = SORT_OPTIONS.get(sort_by or "", SORT_OPTIONS["Status then recent update"])
+        sql = f"""
+            SELECT t.*, r.FULL_NAME AS REVIEWER_NAME
+            FROM {TBL_TASKS} t
+            LEFT JOIN {TBL_MEMBERS} r ON r.MEMBER_ID = t.REVIEWER_MEMBER_ID
+            WHERE {' AND '.join(where)}
+            ORDER BY {order_clause}
+        """
+        return session.sql(sql).to_pandas()
+    except Exception as e:
+        st.error(f"Error loading tasks: {e}")
+        return pd.DataFrame()
+
+def load_all_tasks():
+    try:
+        return session.sql(
+            f"SELECT t.*, r.FULL_NAME AS REVIEWER_NAME FROM {TBL_TASKS} t "
+            f"LEFT JOIN {TBL_MEMBERS} r ON r.MEMBER_ID = t.REVIEWER_MEMBER_ID"
+        ).to_pandas()
+    except Exception:
+        return pd.DataFrame()
+
+def load_assignees_for(task_ids):
+    if not task_ids:
+        return pd.DataFrame(columns=["TASK_ID","MEMBER_ID","FULL_NAME","ASSIGNEE_ROLE"])
+    ids = ",".join(str(int(i)) for i in task_ids)
+    try:
+        return session.sql(f"""
+            SELECT a.TASK_ID, a.MEMBER_ID, m.FULL_NAME, a.ASSIGNEE_ROLE
+            FROM {TBL_ASSIGN} a JOIN {TBL_MEMBERS} m ON m.MEMBER_ID = a.MEMBER_ID
+            WHERE a.TASK_ID IN ({ids})
+        """).to_pandas()
+    except Exception:
+        return pd.DataFrame()
+
+def load_all_assignees():
+    try:
+        return session.sql(f"""
+            SELECT a.TASK_ID, a.MEMBER_ID, m.FULL_NAME, a.ASSIGNEE_ROLE
+            FROM {TBL_ASSIGN} a JOIN {TBL_MEMBERS} m ON m.MEMBER_ID = a.MEMBER_ID
+        """).to_pandas()
+    except Exception:
+        return pd.DataFrame()
+
+def load_notes(task_id):
+    try:
+        return session.sql(f"""
+            SELECT n.NOTE_ID, n.NOTE_TEXT, n.NOTE_DATE, n.IS_IMPORTED, n.CREATED_AT,
+                   m.FULL_NAME AS CREATED_BY_NAME
+            FROM {TBL_NOTES} n
+            LEFT JOIN {TBL_MEMBERS} m ON m.MEMBER_ID = n.CREATED_BY_MEMBER_ID
+            WHERE n.TASK_ID = {int(task_id)}
+            ORDER BY COALESCE(n.NOTE_DATE, n.CREATED_AT::DATE) DESC, n.NOTE_ID DESC
+        """).to_pandas()
+    except Exception:
+        return pd.DataFrame()
+
+def insert_task(work_type, title, reason, platform, reviewer_id, start_dt, closed_dt,
+                status, effort, pct, jira, overflow, import_notes, created_by_id,
+                primary_id, secondary_id, tertiary_id):
+    try:
+        rev = "NULL" if reviewer_id is None else str(int(reviewer_id))
+        cb  = "NULL" if created_by_id is None else str(int(created_by_id))
+        session.sql(f"""
+            INSERT INTO {TBL_TASKS}
+              (WORK_TYPE, TITLE, BUSINESS_REASON, PLATFORM_AREA, REVIEWER_MEMBER_ID,
+               START_DATE, CLOSED_DATE, STATUS, EFFORT_DAYS, COMPLETION_PCT,
+               JIRA_REFERENCE, OVERFLOW_ASSIGNEES, IMPORT_NOTES, CREATED_BY_MEMBER_ID)
+            SELECT '{_safe_sql(work_type)}', '{_safe_sql(title)}', {_sql_str(reason)},
+                   {_sql_str(platform)}, {rev}, {_sql_date(start_dt)}, {_sql_date(closed_dt)},
+                   '{_safe_sql(status)}', {_sql_num(effort)}, {_sql_num(pct)},
+                   {_sql_str(jira)}, {_sql_str(overflow)}, {_sql_str(import_notes)}, {cb}
+        """).collect()
+        tid = int(session.sql(f"SELECT MAX(TASK_ID) AS T FROM {TBL_TASKS}").to_pandas()["T"].iloc[0])
+        for role, mid in [("primary", primary_id), ("secondary", secondary_id), ("tertiary", tertiary_id)]:
+            if mid is None:
+                continue
+            session.sql(
+                f"INSERT INTO {TBL_ASSIGN} (TASK_ID, MEMBER_ID, ASSIGNEE_ROLE) "
+                f"VALUES ({tid}, {int(mid)}, '{role}')"
+            ).collect()
+        return True, tid
+    except Exception as e:
+        return False, str(e)
+
+def update_task_row(task_id, title, reason, platform, reviewer_id, start_dt, closed_dt,
+                    status, effort, pct, jira, primary_id, secondary_id, tertiary_id):
+    try:
+        rev = "NULL" if reviewer_id is None else str(int(reviewer_id))
+        session.sql(f"""
+            UPDATE {TBL_TASKS} SET
+                TITLE = '{_safe_sql(title)}',
+                BUSINESS_REASON = {_sql_str(reason)},
+                PLATFORM_AREA = {_sql_str(platform)},
+                REVIEWER_MEMBER_ID = {rev},
+                START_DATE = {_sql_date(start_dt)},
+                CLOSED_DATE = {_sql_date(closed_dt)},
+                STATUS = '{_safe_sql(status)}',
+                EFFORT_DAYS = {_sql_num(effort)},
+                COMPLETION_PCT = {_sql_num(pct)},
+                JIRA_REFERENCE = {_sql_str(jira)},
+                UPDATED_AT = CURRENT_TIMESTAMP()
+            WHERE TASK_ID = {int(task_id)}
+        """).collect()
+        session.sql(f"DELETE FROM {TBL_ASSIGN} WHERE TASK_ID = {int(task_id)}").collect()
+        for role, mid in [("primary", primary_id), ("secondary", secondary_id), ("tertiary", tertiary_id)]:
+            if mid is None:
+                continue
+            session.sql(
+                f"INSERT INTO {TBL_ASSIGN} (TASK_ID, MEMBER_ID, ASSIGNEE_ROLE) "
+                f"VALUES ({int(task_id)}, {int(mid)}, '{role}')"
+            ).collect()
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def delete_task(task_id):
+    try:
+        session.sql(f"DELETE FROM {TBL_NOTES}  WHERE TASK_ID = {int(task_id)}").collect()
+        session.sql(f"DELETE FROM {TBL_ASSIGN} WHERE TASK_ID = {int(task_id)}").collect()
+        session.sql(f"DELETE FROM {TBL_TASKS}  WHERE TASK_ID = {int(task_id)}").collect()
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def insert_note(task_id, text, created_by_id, note_date=None, is_imported=False):
+    try:
+        cb = "NULL" if created_by_id is None else str(int(created_by_id))
+        session.sql(f"""
+            INSERT INTO {TBL_NOTES} (TASK_ID, NOTE_TEXT, NOTE_DATE, CREATED_BY_MEMBER_ID, IS_IMPORTED)
+            SELECT {int(task_id)}, '{_safe_sql(text)}', {_sql_date(note_date)}, {cb},
+                   {'TRUE' if is_imported else 'FALSE'}
+        """).collect()
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+# ============================================================
+# PARSERS (for import)
+# ============================================================
+RE_LABEL     = re.compile(r"^\s*(why|reason|where|platform|system|how|impact|what|when)\s*[:\-]\s*(.*)$", re.IGNORECASE)
+RE_NOTE_DATE = re.compile(r"^\s*(\d{1,2}[/\-](?:\d{1,2}|[A-Za-z]{3})(?:[/\-]\d{2,4})?)\s*[-:]\s*(.+)$")
+RE_JIRA      = re.compile(r"\b([A-Z]{2,6}-\d+)\b")
+RE_ATLAS_URL = re.compile(r"https?://\S*atlassian\.net/\S+")
+MONTH_ABBR   = {m: i for i, m in enumerate(
+    ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"], 1)}
+
+def parse_task_description(cell):
+    """Split a Task Description cell into (title, business_reason, platform_area)."""
+    if cell is None or (isinstance(cell, float) and pd.isna(cell)):
+        return "", "", ""
+    lines = [ln.strip() for ln in str(cell).replace("\r", "").split("\n")]
+    title = ""
+    current = None
+    buckets = {"why": [], "where": [], "how": [], "impact": [], "other": []}
+    label_to_bucket = {"why":"why","reason":"why","where":"where","platform":"where",
+                       "system":"where","how":"how","impact":"impact","what":"other","when":"other"}
+    for ln in lines:
+        if not ln:
+            continue
+        m = RE_LABEL.match(ln)
+        if m:
+            lbl = m.group(1).lower()
+            current = label_to_bucket.get(lbl, "other")
+            rest = m.group(2).strip()
+            if rest:
+                buckets[current].append(rest)
+        else:
+            if current is None:
+                title = ln if not title else title + " " + ln
+            else:
+                buckets[current].append(ln)
+    if not title and lines:
+        title = next((l for l in lines if l), "")
+    reason_parts = []
+    if buckets["why"]:    reason_parts.append(" ".join(buckets["why"]))
+    if buckets["how"]:    reason_parts.append("How: " + " ".join(buckets["how"]))
+    if buckets["impact"]: reason_parts.append("Impact: " + " ".join(buckets["impact"]))
+    if buckets["other"]:  reason_parts.append(" ".join(buckets["other"]))
+    return title.strip(), " | ".join(p for p in reason_parts if p.strip()).strip(), " ".join(buckets["where"]).strip()
+
+def parse_flexible_date(raw, fallback_year=None):
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return None, False
+    if isinstance(raw, datetime):
+        return raw.date(), False
+    if isinstance(raw, date):
+        return raw, False
+    s = str(raw).strip()
+    if not s or s.upper() in ("NA","N/A","TBD","PENDING","ONGOING"):
+        return None, False
+    # DD/MMM/YYYY or DD-MMM-YY
+    m = re.match(r"^(\d{1,2})[/\-]([A-Za-z]{3})(?:[/\-](\d{2,4}))?$", s)
+    if m:
+        d = int(m.group(1)); mo = MONTH_ABBR.get(m.group(2).lower()); y = m.group(3)
+        if mo:
+            if y:
+                y = int(y); y = 2000 + y if y < 100 else y
+            else:
+                y = fallback_year or date.today().year
+            try:
+                return date(y, mo, d), False
+            except ValueError:
+                return None, False
+    # DD/MM no year
+    m = re.match(r"^(\d{1,2})[/\-](\d{1,2})$", s)
+    if m:
+        d = int(m.group(1)); mo = int(m.group(2))
+        y = fallback_year or date.today().year
+        try:
+            return date(y, mo, d), False
+        except ValueError:
+            return None, False
+    # DD/MM/YYYY or MM/DD/YYYY -- ambiguous if both parts <=12 and !=
+    m = re.match(r"^(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})$", s)
+    if m:
+        a, b, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        y = 2000 + y if y < 100 else y
+        ambiguous = (a <= 12 and b <= 12 and a != b)
+        # default day-first (AU/UK convention)
+        try:
+            return date(y, b, a), ambiguous
+        except ValueError:
+            try:
+                return date(y, a, b), ambiguous
+            except ValueError:
+                return None, False
+    # fallback to pandas
+    try:
+        dt = pd.to_datetime(s, dayfirst=True, errors="coerce")
+        if pd.notna(dt):
+            return dt.date(), False
+    except Exception:
+        pass
+    return None, False
+
+def parse_status_update(cell, row_start_date=None):
+    if cell is None or (isinstance(cell, float) and pd.isna(cell)):
+        return []
+    year_hint = row_start_date.year if row_start_date else None
+    out = []
+    for ln in str(cell).replace("\r","").split("\n"):
+        ln = ln.strip()
+        if not ln:
+            continue
+        m = RE_NOTE_DATE.match(ln)
+        if m:
+            raw_date, text = m.group(1), m.group(2).strip()
+            parsed, _ = parse_flexible_date(raw_date, fallback_year=year_hint)
+            out.append((parsed, text))
+        else:
+            out.append((None, ln))
+    return out
+
+def parse_assignees(cell):
+    if cell is None or (isinstance(cell, float) and pd.isna(cell)):
+        return None, None, None, []
+    parts = [p.strip() for p in re.split(r"[/\\&,;]|\s+and\s+", str(cell)) if p.strip()]
+    canon = [canonical_name(p) for p in parts]
+    canon = [c for c in canon if c]
+    return (canon[0] if len(canon) >= 1 else None,
+            canon[1] if len(canon) >= 2 else None,
+            canon[2] if len(canon) >= 3 else None,
+            canon[3:] if len(canon) > 3 else [])
+
+def extract_jira(*texts):
+    for t in texts:
+        if t is None or (isinstance(t, float) and pd.isna(t)):
+            continue
+        s = str(t)
+        m = RE_JIRA.search(s)
+        if m:
+            return m.group(1)
+        m = RE_ATLAS_URL.search(s)
+        if m:
+            return m.group(0)
+    return None
+
+def map_status(raw):
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return "Queued", "status missing"
+    s = str(raw).strip()
+    if not s:
+        return "Queued", "status blank"
+    for canon in STATUS_OPTIONS:
+        if s.lower() == canon.lower():
+            return canon, None
+    if "pending" in s.lower():
+        return "On Hold", f"status was: {s}"
+    return "Queued", f"unrecognised status: {s}"
+
+
+# ============================================================
+# CURRENT USER RESOLUTION
+# ============================================================
+def resolve_current_member(members_df):
+    if st.session_state.get("current_member_id"):
+        return st.session_state["current_member_id"], st.session_state["current_member_name"]
+    try:
+        sf_user = session.sql("SELECT CURRENT_USER() AS U").to_pandas()["U"].iloc[0]
+    except Exception:
+        sf_user = None
+    if sf_user and not members_df.empty:
+        match = members_df[members_df["SNOWFLAKE_USER"].fillna("").str.upper() == str(sf_user).upper()]
+        if not match.empty:
+            st.session_state["current_member_id"]   = int(match["MEMBER_ID"].iloc[0])
+            st.session_state["current_member_name"] = match["FULL_NAME"].iloc[0]
+            return st.session_state["current_member_id"], st.session_state["current_member_name"]
+    return None, None
+
+
+# ============================================================
+# PRE-FLIGHT
+# ============================================================
+if session is None:
+    st.error("No active Snowflake session. Run this inside Streamlit-in-Snowflake.")
+    st.stop()
+
+members_df = load_members()
+if members_df.empty:
+    st.error("TEAM_MEMBERS is empty. Seed it first.")
+    st.stop()
+
+current_member_id, current_member_name = resolve_current_member(members_df)
+
+if not current_member_id:
+    with st.sidebar:
+        st.markdown("### Who are you?")
+        picker = st.selectbox("Pick your name", [""] + members_df["FULL_NAME"].tolist(), key="user_picker")
+        if picker:
+            m = members_df[members_df["FULL_NAME"] == picker]
+            if not m.empty:
+                mid = int(m["MEMBER_ID"].iloc[0])
+                st.session_state["current_member_id"]   = mid
+                st.session_state["current_member_name"] = picker
+                try:
+                    sf_user = session.sql("SELECT CURRENT_USER() AS U").to_pandas()["U"].iloc[0]
+                    if sf_user:
+                        session.sql(
+                            f"UPDATE {TBL_MEMBERS} SET SNOWFLAKE_USER='{_safe_sql(sf_user)}' "
+                            f"WHERE MEMBER_ID={mid}"
+                        ).collect()
+                except Exception:
+                    pass
+                st.rerun()
+    st.info("Select your name in the sidebar to continue.")
+    st.stop()
+
+
+# ============================================================
+# HEADER
+# ============================================================
+st.markdown(f"""<div class="header-container">
+    <p class="header-title">Team Effort Tracker</p>
+    <p class="header-sub">Signed in as {_esc(current_member_name)}</p>
+</div>""", unsafe_allow_html=True)
+
+if st.session_state.get("success_message"):
+    st.markdown(f'<div class="success-box">{_esc(st.session_state["success_message"])}</div>', unsafe_allow_html=True)
+    st.session_state["success_message"] = None
+
+
+# ============================================================
+# RENDER: single task card (expander)
+# ============================================================
+def render_task_card(row, assignees, work_type):
+    task_id   = int(row["TASK_ID"])
+    title     = row.get("TITLE") or ""
+    status    = row.get("STATUS") or "Queued"
+    pct       = float(row.get("COMPLETION_PCT") or 0)
+    effort    = float(row.get("EFFORT_DAYS") or 0)
+    start_dt  = row.get("START_DATE")
+    closed_dt = row.get("CLOSED_DATE")
+    reviewer  = row.get("REVIEWER_NAME") or ""
+    platform  = row.get("PLATFORM_AREA") or ""
+    reason    = row.get("BUSINESS_REASON") or ""
+    jira      = row.get("JIRA_REFERENCE") or ""
+    overflow  = row.get("OVERFLOW_ASSIGNEES") or ""
+    import_notes = row.get("IMPORT_NOTES") or ""
+
+    role_order = {"primary": 0, "secondary": 1, "tertiary": 2}
+    a_sorted = sorted(assignees, key=lambda a: role_order.get(a[0], 9))
+    primary_name   = a_sorted[0][1] if len(a_sorted) >= 1 else ""
+    secondary_name = a_sorted[1][1] if len(a_sorted) >= 2 else ""
+    tertiary_name  = a_sorted[2][1] if len(a_sorted) >= 3 else ""
+    assignee_str = " / ".join([n for _, n in a_sorted]) or "—"
+
+    label = f"{title}   |   {primary_name or '—'}   |   {status}   |   {int(pct)}%   |   {effort:.1f}d"
+    with st.expander(label, expanded=False):
+        st.markdown(f"""<div class="task-meta">
+            <div class="task-meta-item"><strong>Assignees:</strong> {_esc(assignee_str)}</div>
+            <div class="task-meta-item"><strong>Reviewer:</strong> {_esc(reviewer) or '—'}</div>
+            <div class="task-meta-item"><strong>Platform:</strong> {_esc(platform) or '—'}</div>
+            <div class="task-meta-item"><strong>Start:</strong> {_esc(start_dt) or '—'}</div>
+            <div class="task-meta-item"><strong>Closed:</strong> {_esc(closed_dt) or '—'}</div>
+            <div class="task-meta-item"><strong>JIRA:</strong> {_esc(jira) or '—'}</div>
+        </div>""", unsafe_allow_html=True)
+
+        if reason:
+            st.markdown(f'<div class="task-meta-item"><strong>Why:</strong> {_esc(reason)}</div>', unsafe_allow_html=True)
+        if overflow:
+            st.markdown(f'<div class="warning-box">Extra assignees (beyond 3): {_esc(overflow)}</div>', unsafe_allow_html=True)
+        if import_notes:
+            st.markdown(f'<div class="warning-box">Import flags: {_esc(import_notes)}</div>', unsafe_allow_html=True)
+
+        st.markdown(_progress_html(pct), unsafe_allow_html=True)
+
+        # Quick update
+        qc1, qc2, qc3 = st.columns(3)
+        with qc1:
+            q_status = st.selectbox("Status", STATUS_OPTIONS,
+                                    index=STATUS_OPTIONS.index(status) if status in STATUS_OPTIONS else 0,
+                                    key=f"qs_{task_id}")
+        with qc2:
+            q_effort = st.number_input("Effort (d)", min_value=0.0, value=float(effort), step=0.5,
+                                       format="%.1f", key=f"qe_{task_id}")
+        with qc3:
+            q_pct = st.number_input("Completion %", min_value=0.0, max_value=100.0, value=float(pct),
+                                    step=5.0, format="%.0f", key=f"qp_{task_id}")
+
+        note_text = st.text_input("Add a note", placeholder="Type your update…", key=f"note_{task_id}")
+
+        b1, b2, b3, b4 = st.columns(4)
+        with b1:
+            if st.button("Save", key=f"save_{task_id}", use_container_width=True):
+                if q_status == "Closed" and not closed_dt:
+                    st.error("Set a Closed Date via Edit before closing.")
+                elif q_pct == 100 and q_status not in ("Closed", "Cancelled"):
+                    st.error("100% requires Closed or Cancelled.")
+                else:
+                    reviewer_id   = resolve_member_id(reviewer, members_df)
+                    primary_id    = resolve_member_id(primary_name, members_df)
+                    secondary_id  = resolve_member_id(secondary_name, members_df) if secondary_name else None
+                    tertiary_id   = resolve_member_id(tertiary_name, members_df) if tertiary_name else None
+                    ok, msg = update_task_row(task_id, title, reason, platform, reviewer_id,
+                                              start_dt, closed_dt, q_status, q_effort, q_pct, jira,
+                                              primary_id, secondary_id, tertiary_id)
+                    if ok:
+                        if note_text and note_text.strip():
+                            insert_note(task_id, note_text.strip(), current_member_id)
+                        st.session_state["success_message"] = "Task updated."
+                        st.rerun()
+                    else:
+                        st.error(msg)
+        with b2:
+            if st.button("Edit All", key=f"edit_{task_id}", use_container_width=True):
+                st.session_state["edit_task_id"] = task_id
+                st.rerun()
+        with b3:
+            if st.button("Add Note", key=f"addnote_{task_id}", use_container_width=True):
+                if note_text and note_text.strip():
+                    ok, msg = insert_note(task_id, note_text.strip(), current_member_id)
+                    if ok:
+                        st.session_state["success_message"] = "Note added."
+                        st.rerun()
+                    else:
+                        st.error(msg)
+                else:
+                    st.warning("Enter a note first.")
+        with b4:
+            if st.session_state.get("delete_task_id") == task_id and st.session_state.get("delete_confirm"):
+                if st.button("Confirm", key=f"cdel_{task_id}", type="primary", use_container_width=True):
+                    ok, msg = delete_task(task_id)
+                    st.session_state["delete_task_id"] = None
+                    st.session_state["delete_confirm"] = False
+                    if ok:
+                        st.session_state["success_message"] = "Task deleted."
+                        st.rerun()
+                    else:
+                        st.error(msg)
+            else:
+                if st.button("Delete", key=f"del_{task_id}", use_container_width=True):
+                    st.session_state["delete_task_id"] = task_id
+                    st.session_state["delete_confirm"] = True
+                    st.rerun()
+
+        notes_df = load_notes(task_id)
+        if not notes_df.empty:
+            st.markdown('<div class="section-label" style="margin-top:6px;">Recent Notes</div>', unsafe_allow_html=True)
+            for _, n in notes_df.head(5).iterrows():
+                nd = n.get("NOTE_DATE") or n.get("CREATED_AT")
+                by = n.get("CREATED_BY_NAME") or ("Imported" if n.get("IS_IMPORTED") else "System")
+                st.markdown(
+                    f'<div class="note-card"><div class="note-meta">{_esc(by)} · {_esc(nd)}</div>'
+                    f'<div class="note-text">{_esc(n.get("NOTE_TEXT",""))}</div></div>',
+                    unsafe_allow_html=True)
+            if len(notes_df) > 5:
+                st.caption(f"+ {len(notes_df) - 5} older note(s)")
+
+
+# ============================================================
+# RENDER: Edit panel
+# ============================================================
+def render_edit_panel(work_type):
+    tid = st.session_state.get("edit_task_id")
+    if not tid:
+        return
+    try:
+        df = session.sql(f"SELECT * FROM {TBL_TASKS} WHERE TASK_ID = {int(tid)}").to_pandas()
+    except Exception as e:
+        st.error(f"Load edit row: {e}")
+        st.session_state["edit_task_id"] = None
+        return
+    if df.empty or df["WORK_TYPE"].iloc[0] != work_type:
+        return
+    r = df.iloc[0]
+    a_df = load_assignees_for([tid])
+    a_df = a_df.sort_values("ASSIGNEE_ROLE")
+    current_primary   = a_df[a_df["ASSIGNEE_ROLE"]=="primary"]["FULL_NAME"].iloc[0]   if not a_df[a_df["ASSIGNEE_ROLE"]=="primary"].empty else ""
+    current_secondary = a_df[a_df["ASSIGNEE_ROLE"]=="secondary"]["FULL_NAME"].iloc[0] if not a_df[a_df["ASSIGNEE_ROLE"]=="secondary"].empty else ""
+    current_tertiary  = a_df[a_df["ASSIGNEE_ROLE"]=="tertiary"]["FULL_NAME"].iloc[0]  if not a_df[a_df["ASSIGNEE_ROLE"]=="tertiary"].empty else ""
+    current_reviewer_id = r.get("REVIEWER_MEMBER_ID")
+    current_reviewer  = ""
+    if pd.notna(current_reviewer_id):
+        m = members_df[members_df["MEMBER_ID"] == int(current_reviewer_id)]
+        if not m.empty:
+            current_reviewer = m["FULL_NAME"].iloc[0]
+
+    st.markdown("---")
+    st.markdown(f'<div class="section-label">Editing Task #{int(tid)}</div>', unsafe_allow_html=True)
+
+    names = [""] + members_df["FULL_NAME"].tolist()
+
+    def _idx(lst, val):
+        return lst.index(val) if val in lst else 0
+
+    c1, c2 = st.columns(2)
+    with c1:
+        ed_title    = st.text_input("Title *", value=str(r.get("TITLE") or ""), key=f"ed_title_{tid}")
+        ed_reason   = st.text_area("Business Reason (Why)", value=str(r.get("BUSINESS_REASON") or ""), height=80, key=f"ed_reason_{tid}")
+        ed_platform = st.text_input("Platform / Area (Where)", value=str(r.get("PLATFORM_AREA") or ""), key=f"ed_plat_{tid}")
+        ed_primary   = st.selectbox("Primary Assignee *", names, index=_idx(names, current_primary), key=f"ed_p_{tid}")
+        ed_secondary = st.selectbox("Secondary Assignee",  names, index=_idx(names, current_secondary), key=f"ed_s_{tid}")
+        ed_tertiary  = st.selectbox("Tertiary Assignee",   names, index=_idx(names, current_tertiary),  key=f"ed_t_{tid}")
+        ed_reviewer  = st.selectbox("Reviewer",            names, index=_idx(names, current_reviewer),  key=f"ed_r_{tid}")
+    with c2:
+        sd = r.get("START_DATE")
+        if sd is not None and not isinstance(sd, date):
+            try: sd = pd.to_datetime(sd).date()
+            except Exception: sd = date.today()
+        ed_start = st.date_input("Start Date *", value=sd or date.today(), key=f"ed_start_{tid}")
+        cd = r.get("CLOSED_DATE")
+        if cd is not None and not isinstance(cd, date):
+            try: cd = pd.to_datetime(cd).date()
+            except Exception: cd = None
+        ed_closed = st.date_input("Closed Date", value=cd, key=f"ed_closed_{tid}")
+        cur_status = str(r.get("STATUS") or "Queued")
+        ed_status  = st.selectbox("Status", STATUS_OPTIONS,
+                                  index=STATUS_OPTIONS.index(cur_status) if cur_status in STATUS_OPTIONS else 0,
+                                  key=f"ed_status_{tid}")
+        ed_effort  = st.number_input("Effort (Days)", min_value=0.0,
+                                     value=float(r.get("EFFORT_DAYS") or 0), step=0.5, format="%.1f",
+                                     key=f"ed_effort_{tid}")
+        ed_pct     = st.number_input("Completion %", min_value=0.0, max_value=100.0,
+                                     value=float(r.get("COMPLETION_PCT") or 0), step=5.0, format="%.0f",
+                                     key=f"ed_pct_{tid}")
+        ed_jira    = st.text_input("JIRA / Reference", value=str(r.get("JIRA_REFERENCE") or ""), key=f"ed_jira_{tid}")
+
+    bc1, bc2 = st.columns(2)
+    with bc1:
+        if st.button("Update Task", type="primary", use_container_width=True, key=f"ed_save_{tid}"):
+            errs = []
+            if not ed_title.strip(): errs.append("Title required")
+            if not ed_primary: errs.append("Primary assignee required")
+            if ed_status == "Closed" and not ed_closed: errs.append("Closed Date required when status Closed")
+            if ed_closed and ed_closed < ed_start: errs.append("Closed Date cannot precede Start Date")
+            if ed_pct == 100 and ed_status not in ("Closed", "Cancelled"): errs.append("100% requires Closed or Cancelled")
+            if errs:
+                for e in errs: st.error(e)
+            else:
+                ok, msg = update_task_row(
+                    int(tid), ed_title.strip(), ed_reason, ed_platform,
+                    resolve_member_id(ed_reviewer, members_df) if ed_reviewer else None,
+                    ed_start, ed_closed, ed_status, ed_effort, ed_pct, ed_jira,
+                    resolve_member_id(ed_primary, members_df),
+                    resolve_member_id(ed_secondary, members_df) if ed_secondary else None,
+                    resolve_member_id(ed_tertiary, members_df)  if ed_tertiary  else None,
+                )
+                if ok:
+                    st.session_state["edit_task_id"] = None
+                    st.session_state["success_message"] = "Task updated."
+                    st.rerun()
+                else:
+                    st.error(msg)
+    with bc2:
+        if st.button("Cancel", use_container_width=True, key=f"ed_cancel_{tid}"):
+            st.session_state["edit_task_id"] = None
+            st.rerun()
+
+
+# ============================================================
+# RENDER: Import section (bottom of each work-type tab)
+# ============================================================
+def render_import_section(work_type):
+    st.markdown(f"""<div class="warning-box">
+        Upload your Excel workbook and pick the sheet that matches <strong>{work_type}</strong>.
+        The app parses Task Description into Title / Why / Where, splits multi-assignee on '/',
+        converts Status Update lines into individual notes, and maps name variants
+        (Harry→Harrison, Yesh→Yeshwenth, AIko→Aiko, Batch Team→Aiko, Benjamin→Ben, POppy→Poppy).
+        Flagged rows (ambiguous dates, 4+ assignees, unknown status) are imported with
+        IMPORT_NOTES so you can fix them in-app.
+    </div>""", unsafe_allow_html=True)
+
+    uploaded = st.file_uploader(f"Upload file for {work_type}",
+                                type=["xlsx","xls","csv"], key=f"up_{work_type}")
+    if uploaded is None:
+        return
+
+    fname = uploaded.name.lower()
+    is_csv = fname.endswith(".csv")
+
+    if is_csv:
+        # CSV path — no openpyxl needed
+        try:
+            raw = pd.read_csv(uploaded)
+        except Exception as e:
+            st.error(f"Cannot read CSV: {e}")
+            return
+        sheet = "(CSV — single sheet)"
+    else:
+        # Excel path — needs openpyxl
+        try:
+            xl = pd.ExcelFile(uploaded, engine="openpyxl")
+        except ImportError:
+            st.error(
+                "**openpyxl is not installed.** In the Streamlit editor, click the "
+                "**Packages** dropdown (top-right), search for **openpyxl**, add it, "
+                "then re-run. Or save your file as **.csv** and upload that instead."
+            )
+            return
+        except Exception as e:
+            st.error(f"Cannot read file: {e}")
+            return
+
+        default_sheet = work_type + "s"  # "Enhancements" / "Automations"
+        if default_sheet not in xl.sheet_names:
+            default_sheet = xl.sheet_names[0]
+        sheet = st.selectbox("Sheet", xl.sheet_names,
+                             index=xl.sheet_names.index(default_sheet) if default_sheet in xl.sheet_names else 0,
+                             key=f"sheet_{work_type}")
+
+        try:
+            raw = pd.read_excel(uploaded, sheet_name=sheet, engine="openpyxl")
+        except Exception as e:
+            st.error(f"Could not read sheet: {e}")
+            return
+
+    st.markdown(f'<div class="section-label">File preview ({len(raw)} rows, {len(raw.columns)} cols)</div>', unsafe_allow_html=True)
+    st.dataframe(raw.head(5), use_container_width=True, hide_index=True)
+
+    # --- Column mapping ---
+    st.markdown('<div class="section-label">Column Mapping</div>', unsafe_allow_html=True)
+
+    file_cols = ["-- skip --"] + list(raw.columns.astype(str))
+    def _auto(needle):
+        for c in raw.columns:
+            if str(c).lower().strip() == needle:
+                return str(c)
+        for c in raw.columns:
+            if needle in str(c).lower():
+                return str(c)
+        return "-- skip --"
+
+    mc1, mc2 = st.columns(2)
+    with mc1:
+        m_title  = st.selectbox("Task Description *", file_cols,
+                                index=file_cols.index(_auto("task description")) if _auto("task description") in file_cols else 0,
+                                key=f"m_title_{work_type}")
+        m_assign = st.selectbox("Assignee *", file_cols,
+                                index=file_cols.index(_auto("assignee")) if _auto("assignee") in file_cols else 0,
+                                key=f"m_assign_{work_type}")
+        m_rev    = st.selectbox("Reviewer", file_cols,
+                                index=file_cols.index(_auto("reviewer")) if _auto("reviewer") in file_cols else 0,
+                                key=f"m_rev_{work_type}")
+        m_start  = st.selectbox("Start Date *", file_cols,
+                                index=file_cols.index(_auto("start")) if _auto("start") in file_cols else 0,
+                                key=f"m_start_{work_type}")
+        m_eff    = st.selectbox("Effort (Days)", file_cols,
+                                index=file_cols.index(_auto("effort")) if _auto("effort") in file_cols else 0,
+                                key=f"m_eff_{work_type}")
+    with mc2:
+        m_status = st.selectbox("Status *", file_cols,
+                                index=file_cols.index(_auto("status")) if _auto("status") in file_cols and "update" not in _auto("status") else 0,
+                                key=f"m_status_{work_type}")
+        m_jira   = st.selectbox("JIRA", file_cols,
+                                index=file_cols.index(_auto("jira")) if _auto("jira") in file_cols else 0,
+                                key=f"m_jira_{work_type}")
+        m_pct    = st.selectbox("% Completed", file_cols,
+                                index=file_cols.index(_auto("complet")) if _auto("complet") in file_cols else 0,
+                                key=f"m_pct_{work_type}")
+        m_upd    = st.selectbox("Status Update (notes)", file_cols,
+                                index=file_cols.index(_auto("status update")) if _auto("status update") in file_cols else 0,
+                                key=f"m_upd_{work_type}")
+        m_closed = st.selectbox("Closed Date", file_cols,
+                                index=file_cols.index(_auto("closed")) if _auto("closed") in file_cols else 0,
+                                key=f"m_closed_{work_type}")
+
+    def _g(row, col):
+        if col == "-- skip --" or col not in raw.columns:
+            return None
+        v = row.get(col)
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return None
+        return v
+
+    if st.button(f"Build preview for {work_type}", key=f"prev_{work_type}", use_container_width=True):
+        preview = []
+        total_notes = 0
+        for idx, row in raw.iterrows():
+            flags = []
+
+            title, reason, platform = parse_task_description(_g(row, m_title))
+            if not title:
+                flags.append("missing title")
+
+            primary, secondary, tertiary, overflow = parse_assignees(_g(row, m_assign))
+            if not primary:
+                flags.append("missing primary assignee")
+            if overflow:
+                flags.append(f"4+ assignees: {', '.join(overflow)}")
+
+            rev_raw = _g(row, m_rev)
+            rev_list = []
+            if rev_raw:
+                rev_parts = [p.strip() for p in re.split(r"[/\\&,;]|\s+and\s+", str(rev_raw)) if p.strip()]
+                rev_list = [canonical_name(p) for p in rev_parts if canonical_name(p)]
+            reviewer = rev_list[0] if rev_list else None
+            if len(rev_list) > 1:
+                flags.append(f"extra reviewers: {', '.join(rev_list[1:])}")
+
+            sd_raw = _g(row, m_start)
+            start_dt, sd_amb = parse_flexible_date(sd_raw)
+            if sd_raw and not start_dt:
+                flags.append(f"start date unparseable: {sd_raw}")
+            elif sd_amb:
+                flags.append(f"start date ambiguous: {sd_raw}")
+
+            cd_raw = _g(row, m_closed)
+            closed_dt, cd_amb = parse_flexible_date(cd_raw, fallback_year=(start_dt.year if start_dt else None))
+            if cd_raw and not closed_dt:
+                flags.append(f"closed date unparseable: {cd_raw}")
+            elif cd_amb:
+                flags.append(f"closed date ambiguous: {cd_raw}")
+
+            status, status_flag = map_status(_g(row, m_status))
+            if status_flag:
+                flags.append(status_flag)
+            if status == "Closed" and not closed_dt:
+                flags.append("closed but no closed_date")
+
+            try:
+                effort = float(_g(row, m_eff) or 0)
+                if pd.isna(effort): effort = 0
+            except Exception:
+                effort = 0
+                if _g(row, m_eff) is not None:
+                    flags.append("effort non-numeric")
+
+            try:
+                pct = float(_g(row, m_pct) or 0)
+                if pd.isna(pct): pct = 0
+            except Exception:
+                pct = 0
+                if _g(row, m_pct) is not None:
+                    flags.append("pct non-numeric")
+            pct = max(0.0, min(100.0, pct))
+
+            jira = _g(row, m_jira)
+            if not jira:
+                jira = extract_jira(_g(row, m_title), _g(row, m_upd))
+
+            notes = parse_status_update(_g(row, m_upd), row_start_date=start_dt)
+            total_notes += len(notes)
+
+            preview.append({
+                "_row": idx + 2,  # excel row number (header is row 1)
+                "work_type": work_type,
+                "title": title,
+                "business_reason": reason,
+                "platform_area": platform,
+                "primary_assignee": primary,
+                "secondary_assignee": secondary,
+                "tertiary_assignee": tertiary,
+                "overflow_assignees": ", ".join(overflow) if overflow else "",
+                "reviewer": reviewer,
+                "start_date": start_dt,
+                "closed_date": closed_dt,
+                "status": status,
+                "effort_days": effort,
+                "completion_pct": pct,
+                "jira_reference": jira,
+                "import_notes": " | ".join(flags),
+                "_notes": notes,
+            })
+
+        pv_df = pd.DataFrame(preview)
+        st.session_state["import_preview"][work_type] = pv_df
+        st.session_state[f"import_notes_total_{work_type}"] = total_notes
+
+    pv_df = st.session_state["import_preview"].get(work_type)
+    if pv_df is None or pv_df.empty:
+        return
+
+    notes_total = st.session_state.get(f"import_notes_total_{work_type}", 0)
+    flagged = pv_df[pv_df["import_notes"] != ""]
+    ready   = pv_df[(pv_df["title"] != "") & (pv_df["primary_assignee"].notna()) & (pv_df["primary_assignee"] != "")]
+    blocked = pv_df[(pv_df["title"] == "") | (pv_df["primary_assignee"].isna()) | (pv_df["primary_assignee"] == "")]
+
+    mcol1, mcol2, mcol3, mcol4 = st.columns(4)
+    with mcol1: st.markdown(_metric_card(len(pv_df), "Rows parsed", "blue"), unsafe_allow_html=True)
+    with mcol2: st.markdown(_metric_card(len(ready), "Ready to import", "green"), unsafe_allow_html=True)
+    with mcol3: st.markdown(_metric_card(len(blocked), "Will be skipped", "red"), unsafe_allow_html=True)
+    with mcol4: st.markdown(_metric_card(notes_total, "Notes to create", "purple"), unsafe_allow_html=True)
+
+    if len(flagged) > 0:
+        st.markdown(
+            f'<div class="warning-box">{len(flagged)} row(s) have flags. '
+            f'They will still import (unless missing title or primary assignee) — '
+            f'check IMPORT_NOTES in the app after.</div>',
+            unsafe_allow_html=True)
+
+    show_cols = ["_row","title","primary_assignee","secondary_assignee","tertiary_assignee",
+                 "overflow_assignees","reviewer","start_date","closed_date","status",
+                 "effort_days","completion_pct","jira_reference","import_notes"]
+    st.dataframe(pv_df[show_cols].head(30), use_container_width=True, hide_index=True)
+    if len(pv_df) > 30:
+        st.caption(f"Showing first 30 of {len(pv_df)}")
+
+    col_imp, col_cancel = st.columns(2)
+    with col_imp:
+        if st.button(f"Import {len(ready)} row(s) into {work_type}", type="primary",
+                     use_container_width=True, key=f"doimport_{work_type}"):
+            ok_count = 0; fail_count = 0; fail_msgs = []
+            prog = st.progress(0)
+            for i, (_, r) in enumerate(ready.iterrows()):
+                primary_id   = resolve_member_id(r["primary_assignee"], members_df)
+                secondary_id = resolve_member_id(r["secondary_assignee"], members_df) if r["secondary_assignee"] else None
+                tertiary_id  = resolve_member_id(r["tertiary_assignee"], members_df)  if r["tertiary_assignee"]  else None
+                reviewer_id  = resolve_member_id(r["reviewer"], members_df) if r["reviewer"] else None
+                if primary_id is None:
+                    fail_count += 1
+                    fail_msgs.append(f"Row {r['_row']}: primary assignee '{r['primary_assignee']}' not in TEAM_MEMBERS")
+                    continue
+                ok, res = insert_task(
+                    work_type, r["title"], r["business_reason"], r["platform_area"], reviewer_id,
+                    r["start_date"], r["closed_date"], r["status"], r["effort_days"], r["completion_pct"],
+                    r["jira_reference"], r["overflow_assignees"], r["import_notes"], current_member_id,
+                    primary_id, secondary_id, tertiary_id,
+                )
+                if ok:
+                    ok_count += 1
+                    task_id = res
+                    for note_date, note_text in r["_notes"]:
+                        insert_note(task_id, note_text, None, note_date=note_date, is_imported=True)
+                else:
+                    fail_count += 1
+                    fail_msgs.append(f"Row {r['_row']}: {res}")
+                prog.progress((i + 1) / max(len(ready), 1))
+            prog.empty()
+            if ok_count:
+                st.markdown(f'<div class="success-box">Imported {ok_count} task(s).</div>', unsafe_allow_html=True)
+            if fail_count:
+                st.markdown(f'<div class="error-box">{fail_count} row(s) failed.</div>', unsafe_allow_html=True)
+                for fm in fail_msgs[:10]:
+                    st.caption(fm)
+                if len(fail_msgs) > 10:
+                    st.caption(f"...and {len(fail_msgs) - 10} more")
+            st.session_state["import_preview"][work_type] = None
+    with col_cancel:
+        if st.button("Cancel / clear preview", use_container_width=True, key=f"cancel_{work_type}"):
+            st.session_state["import_preview"][work_type] = None
+            st.rerun()
+
+
+# ============================================================
+# WORK-TYPE PAGE RENDERER (Enhancements / Automation)
+# ============================================================
+def render_work_type_page(work_type):
+    # Add new task
+    st.markdown(f'<div class="section-label">Add new {work_type} task</div>', unsafe_allow_html=True)
+    with st.form(f"add_form_{work_type}", clear_on_submit=True):
+        c1, c2 = st.columns(2)
+        names = [""] + members_df["FULL_NAME"].tolist()
+        with c1:
+            title    = st.text_input("Task Title *", key=f"nt_title_{work_type}")
+            reason   = st.text_area("Business Reason (Why)", height=80, key=f"nt_reason_{work_type}")
+            platform = st.text_input("Platform / Area (Where)", key=f"nt_plat_{work_type}")
+            primary   = st.selectbox("Primary Assignee *", names, key=f"nt_p_{work_type}")
+            secondary = st.selectbox("Secondary Assignee",  names, key=f"nt_s_{work_type}")
+            tertiary  = st.selectbox("Tertiary Assignee",   names, key=f"nt_t_{work_type}")
+            reviewer  = st.selectbox("Reviewer", names, key=f"nt_r_{work_type}")
+        with c2:
+            start_dt  = st.date_input("Start Date *", value=date.today(), key=f"nt_sd_{work_type}")
+            closed_dt = st.date_input("Closed Date", value=None, key=f"nt_cd_{work_type}")
+            status    = st.selectbox("Status", STATUS_OPTIONS, key=f"nt_st_{work_type}")
+            effort    = st.number_input("Effort (Days)", min_value=0.0, value=0.0, step=0.5, key=f"nt_ef_{work_type}")
+            pct       = st.number_input("Completion %", min_value=0.0, max_value=100.0, value=0.0, step=5.0, key=f"nt_pc_{work_type}")
+            jira      = st.text_input("JIRA / Reference", key=f"nt_jr_{work_type}")
+
+        if st.form_submit_button(f"Create {work_type} task", type="primary", use_container_width=True):
+            errs = []
+            if not title.strip(): errs.append("Title required")
+            if not primary: errs.append("Primary assignee required")
+            if status == "Closed" and not closed_dt: errs.append("Closed Date required when status Closed")
+            if closed_dt and closed_dt < start_dt: errs.append("Closed Date cannot precede Start Date")
+            if pct == 100 and status not in ("Closed","Cancelled"): errs.append("100% requires Closed or Cancelled")
+            if errs:
+                for e in errs: st.error(e)
+            else:
+                ok, msg = insert_task(
+                    work_type, title.strip(), reason, platform,
+                    resolve_member_id(reviewer, members_df) if reviewer else None,
+                    start_dt, closed_dt, status, effort, pct, jira, None, None, current_member_id,
+                    resolve_member_id(primary, members_df),
+                    resolve_member_id(secondary, members_df) if secondary else None,
+                    resolve_member_id(tertiary, members_df)  if tertiary  else None,
+                )
+                if ok:
+                    st.session_state["success_message"] = f"{work_type} task created."
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+    # Filters
+    st.markdown('<div class="section-label" style="margin-top:14px;">Existing tasks</div>', unsafe_allow_html=True)
+    fc1, fc2, fc3, fc4 = st.columns([1,1,1.2,1.4])
+    with fc1:
+        status_f = st.selectbox("Status", ["All"] + STATUS_OPTIONS, key=f"sf_{work_type}")
+    with fc2:
+        assignee_name = st.selectbox("Assignee", ["All"] + members_df["FULL_NAME"].tolist(), key=f"af_{work_type}")
+    with fc3:
+        sort_by = st.selectbox("Sort by", list(SORT_OPTIONS.keys()), key=f"sort_{work_type}")
+    with fc4:
+        search = st.text_input("Search (title / reason / platform / JIRA)", key=f"srch_{work_type}")
+
+    # Quick filter chips
+    qc1, qc2, qc3, qc4 = st.columns(4)
+    quick = st.session_state.get(f"quick_{work_type}", None)
+    with qc1:
+        if st.button("Open only", key=f"q_open_{work_type}", use_container_width=True):
+            st.session_state[f"quick_{work_type}"] = "open"; st.rerun()
+    with qc2:
+        if st.button("Mine", key=f"q_mine_{work_type}", use_container_width=True):
+            st.session_state[f"quick_{work_type}"] = "mine"; st.rerun()
+    with qc3:
+        if st.button("Stale >30d", key=f"q_stale_{work_type}", use_container_width=True):
+            st.session_state[f"quick_{work_type}"] = "stale"; st.rerun()
+    with qc4:
+        if st.button("Clear quick filter", key=f"q_clr_{work_type}", use_container_width=True):
+            st.session_state[f"quick_{work_type}"] = None; st.rerun()
+    if quick:
+        st.caption(f"Quick filter active: **{quick}**")
+
+    assignee_id = resolve_member_id(assignee_name, members_df) if assignee_name != "All" else None
+    tasks_df = load_tasks(work_type, status_filter=status_f, assignee_member_id=assignee_id, search=search, sort_by=sort_by)
+
+    # Apply quick filters post-query
+    if not tasks_df.empty and quick:
+        if quick == "open":
+            tasks_df = tasks_df[tasks_df["STATUS"].isin(OPEN_STATUSES)]
+        elif quick == "mine" and current_member_id:
+            try:
+                mine_ids = session.sql(
+                    f"SELECT TASK_ID FROM {TBL_ASSIGN} WHERE MEMBER_ID={int(current_member_id)}"
+                ).to_pandas()["TASK_ID"].tolist()
+                tasks_df = tasks_df[tasks_df["TASK_ID"].isin(mine_ids)]
+            except Exception as e:
+                st.caption(f"Could not apply 'Mine' filter: {e}")
+        elif quick == "stale":
+            today = date.today()
+            def _is_stale(r):
+                if r["STATUS"] not in OPEN_STATUSES: return False
+                try: sd = pd.to_datetime(r["START_DATE"]).date()
+                except Exception: return False
+                return (today - sd).days > 30
+            tasks_df = tasks_df[tasks_df.apply(_is_stale, axis=1)]
+
+    if tasks_df.empty:
+        st.info(f"No {work_type.lower()} tasks match filters.")
+    else:
+        a_df = load_assignees_for(tasks_df["TASK_ID"].tolist())
+        by_tid = {}
+        for _, ar in a_df.iterrows():
+            by_tid.setdefault(int(ar["TASK_ID"]), []).append((ar["ASSIGNEE_ROLE"], ar["FULL_NAME"]))
+        st.markdown(f'<p class="note-meta">{len(tasks_df)} task(s)</p>', unsafe_allow_html=True)
+        for _, row in tasks_df.iterrows():
+            render_task_card(row, by_tid.get(int(row["TASK_ID"]), []), work_type)
+
+    render_edit_panel(work_type)
+
+    st.markdown("---")
+    st.markdown(f'<div class="section-label">Import {work_type} data from Excel</div>', unsafe_allow_html=True)
+    render_import_section(work_type)
+
+
+# ============================================================
+# STATS PAGE
+# ============================================================
+def render_stats_page():
+    tasks = load_all_tasks()
+    if tasks.empty:
+        st.info("No tasks yet. Create some or import.")
+        return
+
+    assigns = load_all_assignees()
+
+    total_tasks = len(tasks)
+    open_tasks  = len(tasks[tasks["STATUS"].isin(OPEN_STATUSES)])
+    in_progress = len(tasks[tasks["STATUS"] == "In Progress"])
+    on_hold     = len(tasks[tasks["STATUS"] == "On Hold"])
+    closed_all  = len(tasks[tasks["STATUS"] == "Closed"])
+    total_effort = float(pd.to_numeric(tasks["EFFORT_DAYS"], errors="coerce").fillna(0).sum())
+
+    today = date.today()
+    month_start = today.replace(day=1)
+    def _to_date(x):
+        if x is None or (isinstance(x, float) and pd.isna(x)): return None
+        if isinstance(x, date) and not isinstance(x, datetime): return x
+        try: return pd.to_datetime(x).date()
+        except Exception: return None
+
+    tasks["_CLOSED"] = tasks["CLOSED_DATE"].apply(_to_date)
+    closed_this_month = len(tasks[(tasks["STATUS"] == "Closed") &
+                                  (tasks["_CLOSED"].apply(lambda d: d is not None and d >= month_start))])
+
+    # Long running open tasks (>30 days)
+    tasks["_START"] = tasks["START_DATE"].apply(_to_date)
+    long_open = len(tasks[(tasks["STATUS"].isin(OPEN_STATUSES)) &
+                          (tasks["_START"].apply(lambda d: d is not None and (today - d).days > 30))])
+
+    st.markdown('<div class="section-label">Key metrics</div>', unsafe_allow_html=True)
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
+    with m1: st.markdown(_metric_card(total_tasks, "Total tasks", "blue"), unsafe_allow_html=True)
+    with m2: st.markdown(_metric_card(open_tasks,  "Open", "teal"), unsafe_allow_html=True)
+    with m3: st.markdown(_metric_card(in_progress, "In progress", "purple"), unsafe_allow_html=True)
+    with m4: st.markdown(_metric_card(closed_this_month, "Closed this month", "green"), unsafe_allow_html=True)
+    with m5: st.markdown(_metric_card(f"{total_effort:.0f}", "Effort days logged", "amber"), unsafe_allow_html=True)
+    with m6: st.markdown(_metric_card(long_open, "Open >30 days", "red"), unsafe_allow_html=True)
+
+    st.markdown('<div class="section-label" style="margin-top:16px;">Charts</div>', unsafe_allow_html=True)
+
+    # Chart 1 & 2
+    ch1, ch2 = st.columns(2)
+
+    # Chart 1: Status distribution (all tasks, stacked by work_type)
+    with ch1:
+        st.markdown("**Status distribution (by work type)**")
+        try:
+            piv = tasks.pivot_table(index="STATUS", columns="WORK_TYPE",
+                                    values="TASK_ID", aggfunc="count", fill_value=0)
+            piv = piv.reindex(STATUS_OPTIONS).fillna(0)
+            # Ensure both work-type columns always present for stable color mapping
+            for wt in ["Enhancement","Automation"]:
+                if wt not in piv.columns: piv[wt] = 0
+            piv = piv[["Enhancement","Automation"]]
+            st.bar_chart(piv, horizontal=True, stack=True,
+                         color=["#3b82f6","#14b8a6"], height=320)
+        except Exception as e:
+            st.caption(f"Chart error: {e}")
+
+    # Chart 2: Effort by primary assignee (top 10)
+    with ch2:
+        st.markdown("**Effort days by primary assignee (top 10)**")
+        try:
+            primary = assigns[assigns["ASSIGNEE_ROLE"] == "primary"].merge(
+                tasks[["TASK_ID","EFFORT_DAYS"]], on="TASK_ID", how="left")
+            primary["EFFORT_DAYS"] = pd.to_numeric(primary["EFFORT_DAYS"], errors="coerce").fillna(0)
+            grp = primary.groupby("FULL_NAME")["EFFORT_DAYS"].sum().sort_values(ascending=True).tail(10)
+            df = grp.reset_index()
+            df.columns = ["Person", "Effort (Days)"]
+            if df.empty:
+                st.info("No effort data yet.")
+            else:
+                st.bar_chart(df.set_index("Person"), horizontal=True,
+                             color="#3b82f6", height=320)
+        except Exception as e:
+            st.caption(f"Chart error: {e}")
+
+    # Chart 3 & 4
+    ch3, ch4 = st.columns(2)
+
+    # Chart 3: Open tasks per person (stacked by status)
+    with ch3:
+        st.markdown("**Open tasks per primary assignee**")
+        try:
+            primary = assigns[assigns["ASSIGNEE_ROLE"] == "primary"].merge(
+                tasks[["TASK_ID","STATUS"]], on="TASK_ID", how="left")
+            open_df = primary[primary["STATUS"].isin(OPEN_STATUSES)]
+            if not open_df.empty:
+                piv = open_df.pivot_table(index="FULL_NAME", columns="STATUS",
+                                          values="TASK_ID", aggfunc="count", fill_value=0)
+                for s in OPEN_STATUSES:
+                    if s not in piv.columns:
+                        piv[s] = 0
+                piv = piv[OPEN_STATUSES].sort_values(OPEN_STATUSES, ascending=True)
+                st.bar_chart(piv, horizontal=True, stack=True,
+                             color=["#60a5fa","#a78bfa","#fbbf24"], height=320)
+            else:
+                st.info("No open tasks.")
+        except Exception as e:
+            st.caption(f"Chart error: {e}")
+
+    # Chart 4: Monthly closure throughput (last 6 months)
+    with ch4:
+        st.markdown("**Closed tasks per month (last 6 months)**")
+        try:
+            closed_df = tasks[(tasks["STATUS"] == "Closed") & (tasks["_CLOSED"].notna())].copy()
+            if not closed_df.empty:
+                closed_df["_MONTH"] = closed_df["_CLOSED"].apply(lambda d: d.replace(day=1))
+                cutoff = (today.replace(day=1) - pd.DateOffset(months=5)).date()
+                closed_df = closed_df[closed_df["_MONTH"] >= cutoff]
+                by_month = closed_df.groupby(["_MONTH","WORK_TYPE"])["TASK_ID"].count().unstack(fill_value=0)
+                for wt in ["Enhancement","Automation"]:
+                    if wt not in by_month.columns: by_month[wt] = 0
+                by_month = by_month[["Enhancement","Automation"]].sort_index()
+                by_month.index = [d.strftime("%b %Y") for d in by_month.index]
+                st.bar_chart(by_month, color=["#3b82f6","#14b8a6"],
+                             stack=True, height=320)
+            else:
+                st.info("No closed tasks yet.")
+        except Exception as e:
+            st.caption(f"Chart error: {e}")
+
+
+# ============================================================
+# DANGER ZONE — reset all task data
+# ============================================================
+def render_danger_zone():
+    st.markdown("---")
+    with st.expander("Danger Zone — reset all task data", expanded=False):
+        st.warning(
+            "This will permanently delete **all tasks, all assignees, and all "
+            "progress notes**. TEAM_MEMBERS is preserved. This cannot be undone."
+        )
+        try:
+            cnt_t = session.sql(f"SELECT COUNT(*) C FROM {TBL_TASKS}").to_pandas().iloc[0]["C"]
+            cnt_a = session.sql(f"SELECT COUNT(*) C FROM {TBL_ASSIGN}").to_pandas().iloc[0]["C"]
+            cnt_n = session.sql(f"SELECT COUNT(*) C FROM {TBL_NOTES}").to_pandas().iloc[0]["C"]
+            st.caption(f"Current rows — tasks: **{cnt_t}**, assignees: **{cnt_a}**, notes: **{cnt_n}**")
+        except Exception as e:
+            st.caption(f"Could not read row counts: {e}")
+
+        confirm_chk = st.checkbox("I understand this cannot be undone", key="dz_chk")
+        typed = st.text_input("Type RESET ALL to confirm", key="dz_typed")
+        if st.button("Reset all task data", type="primary",
+                     disabled=not (confirm_chk and typed.strip() == "RESET ALL"),
+                     key="dz_btn"):
+            try:
+                # Order matters: child tables first
+                session.sql(f"DELETE FROM {TBL_NOTES}").collect()
+                session.sql(f"DELETE FROM {TBL_ASSIGN}").collect()
+                session.sql(f"DELETE FROM {TBL_TASKS}").collect()
+                st.success("All task data reset. TEAM_MEMBERS preserved.")
+                # Clear the confirm input so user can't re-run by accident
+                st.session_state["dz_chk"] = False
+                st.session_state["dz_typed"] = ""
+                st.rerun()
+            except Exception as e:
+                st.error(f"Reset failed: {e}")
+
+
+# ============================================================
+# TABS
+# ============================================================
+tab_enh, tab_auto, tab_stats = st.tabs(["ENHANCEMENTS", "AUTOMATION", "STATS"])
+
+with tab_enh:
+    render_work_type_page("Enhancement")
+
+with tab_auto:
+    render_work_type_page("Automation")
+
+with tab_stats:
+    render_stats_page()
+    render_danger_zone()
