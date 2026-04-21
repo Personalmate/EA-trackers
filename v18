@@ -887,7 +887,7 @@ def render_import_section(work_type):
 
     if is_csv:
         try:
-            raw = pd.read_csv(uploaded, encoding="cp1252")
+            raw = pd.read_csv(uploaded, encoding="latin1")
         except Exception as e:
             st.error(f"Cannot read CSV: {e}")
             return
