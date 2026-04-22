@@ -173,6 +173,7 @@ _defaults = {
     "current_member_id": None,
     "current_member_name": None,
     "import_preview": {},   # keyed by work_type
+    "stats_filter": "all",
 }
 for _k, _v in _defaults.items():
     if _k not in st.session_state:
@@ -793,9 +794,13 @@ def render_edit_panel(work_type):
                                      key=f"ed_pct_{tid}")
         ed_jira    = st.text_input("JIRA / Reference", value=str(r.get("JIRA_REFERENCE") or ""), key=f"ed_jira_{tid}")
 
-    bc1, bc2 = st.columns(2)
+    # New note input
+    new_note = st.text_input("Add a note (optional)", placeholder="Type your update...",
+                             key=f"ed_newnote_{tid}")
+
+    bc1, bc2, bc3 = st.columns(3)
     with bc1:
-        if st.button("Update Task", type="primary", use_container_width=True, key=f"ed_save_{tid}"):
+        if st.button("Save", type="primary", use_container_width=True, key=f"ed_save_{tid}"):
             errs = []
             if not ed_title.strip(): errs.append("Title required")
             if not ed_primary: errs.append("Primary assignee required")
@@ -814,15 +819,47 @@ def render_edit_panel(work_type):
                     resolve_member_id(ed_tertiary, members_df)  if ed_tertiary  else None,
                 )
                 if ok:
+                    if new_note and new_note.strip():
+                        insert_note(int(tid), new_note.strip(), current_member_id)
                     st.session_state["edit_task_id"] = None
                     st.session_state["success_message"] = "Task updated."
                     st.rerun()
                 else:
                     st.error(msg)
     with bc2:
-        if st.button("Cancel", use_container_width=True, key=f"ed_cancel_{tid}"):
+        if st.session_state.get("delete_task_id") == int(tid) and st.session_state.get("delete_confirm"):
+            if st.button("Confirm Delete", key=f"ed_cdel_{tid}", type="primary", use_container_width=True):
+                ok, msg = delete_task(int(tid))
+                st.session_state["delete_task_id"] = None
+                st.session_state["delete_confirm"] = False
+                st.session_state["edit_task_id"] = None
+                if ok:
+                    st.session_state["success_message"] = "Task deleted."
+                    st.rerun()
+                else:
+                    st.error(msg)
+        else:
+            if st.button("Delete", use_container_width=True, key=f"ed_del_{tid}"):
+                st.session_state["delete_task_id"] = int(tid)
+                st.session_state["delete_confirm"] = True
+                st.rerun()
+    with bc3:
+        if st.button("Close", use_container_width=True, key=f"ed_cancel_{tid}"):
             st.session_state["edit_task_id"] = None
             st.rerun()
+
+    # Show notes for this task (sorted by date desc)
+    notes_df = load_notes(int(tid))
+    if not notes_df.empty:
+        st.markdown(f'<div class="section-label" style="margin-top:14px;">Notes ({len(notes_df)})</div>',
+                    unsafe_allow_html=True)
+        for _, n in notes_df.iterrows():
+            nd = n.get("NOTE_DATE") or n.get("CREATED_AT")
+            by = n.get("CREATED_BY_NAME") or ("Imported" if n.get("IS_IMPORTED") else "System")
+            st.markdown(
+                f'<div class="note-card"><div class="note-meta">{_esc(nd)}  |  {_esc(by)}</div>'
+                f'<div class="note-text">{_esc(n.get("NOTE_TEXT",""))}</div></div>',
+                unsafe_allow_html=True)
 
 
 # ============================================================
@@ -1113,8 +1150,25 @@ def render_import_section(work_type):
 # WORK-TYPE PAGE RENDERER (Enhancements / Automation)
 # ============================================================
 def render_work_type_page(work_type):
-    # Add new task (collapsible)
-    with st.expander(f"Add new {work_type} task", expanded=False):
+    # ---- Add new task (button toggle) ----
+    show_add_key = f"show_add_{work_type}"
+    if show_add_key not in st.session_state:
+        st.session_state[show_add_key] = False
+
+    btn_col, _ = st.columns([1, 4])
+    with btn_col:
+        if st.session_state[show_add_key]:
+            if st.button(f"- Hide add form", key=f"toggle_add_{work_type}",
+                         type="secondary", use_container_width=True):
+                st.session_state[show_add_key] = False
+                st.rerun()
+        else:
+            if st.button(f"+ Add new {work_type} task", key=f"toggle_add_{work_type}",
+                         type="primary", use_container_width=True):
+                st.session_state[show_add_key] = True
+                st.rerun()
+
+    if st.session_state[show_add_key]:
         with st.form(f"add_form_{work_type}", clear_on_submit=True):
             c1, c2 = st.columns(2)
             names = [""] + members_df["FULL_NAME"].tolist()
@@ -1158,14 +1212,22 @@ def render_work_type_page(work_type):
                     else:
                         st.error(msg)
 
-    # Filters — status + search
-    fc1, fc2 = st.columns([1, 2])
+    # ---- Filters: status, assignee, search ----
+    st.markdown(f'<div class="section-label" style="margin-top:14px;">All {work_type} tasks</div>',
+                unsafe_allow_html=True)
+    fc1, fc2, fc3 = st.columns([1, 1, 2])
     with fc1:
         status_f = st.selectbox("Status", ["All"] + STATUS_OPTIONS, key=f"sf_{work_type}")
     with fc2:
-        search = st.text_input("Search", key=f"srch_{work_type}", placeholder="title, reason, platform, JIRA...")
+        assignee_f = st.selectbox("Assignee", ["All"] + members_df["FULL_NAME"].tolist(),
+                                  key=f"af_{work_type}")
+    with fc3:
+        search = st.text_input("Search", key=f"srch_{work_type}",
+                               placeholder="title, reason, platform, JIRA...")
 
-    tasks_df = load_tasks(work_type, status_filter=status_f, search=search)
+    assignee_id = resolve_member_id(assignee_f, members_df) if assignee_f != "All" else None
+    tasks_df = load_tasks(work_type, status_filter=status_f,
+                          assignee_member_id=assignee_id, search=search)
 
     if tasks_df.empty:
         st.info(f"No {work_type.lower()} tasks match filters.")
@@ -1175,57 +1237,64 @@ def render_work_type_page(work_type):
         for _, ar in a_df.iterrows():
             by_tid.setdefault(int(ar["TASK_ID"]), []).append((ar["ASSIGNEE_ROLE"], ar["FULL_NAME"]))
 
-        # Group tasks by primary assignee
-        person_tasks = {}
-        for _, row in tasks_df.iterrows():
-            tid = int(row["TASK_ID"])
-            assignees = by_tid.get(tid, [])
-            role_order = {"primary": 0, "secondary": 1, "tertiary": 2}
-            a_sorted = sorted(assignees, key=lambda a: role_order.get(a[0], 9))
-            primary_name = a_sorted[0][1] if a_sorted else "Unassigned"
-            person_tasks.setdefault(primary_name, []).append((row, assignees))
+        # Build display dataframe
+        rows = []
+        role_order = {"primary": 0, "secondary": 1, "tertiary": 2}
+        for _, r in tasks_df.iterrows():
+            tid = int(r["TASK_ID"])
+            assignees = sorted(by_tid.get(tid, []), key=lambda a: role_order.get(a[0], 9))
+            primary = assignees[0][1] if assignees else "—"
+            others = " / ".join([n for _, n in assignees[1:]]) if len(assignees) > 1 else ""
+            rows.append({
+                "Status":    r.get("STATUS") or "Queued",
+                "Title":     r.get("TITLE") or "",
+                "Assignee":  primary,
+                "Others":    others,
+                "Effort":    float(r.get("EFFORT_DAYS") or 0),
+                "%":         int(float(r.get("COMPLETION_PCT") or 0)),
+                "Start":     r.get("START_DATE"),
+                "Closed":    r.get("CLOSED_DATE"),
+                "JIRA":      r.get("JIRA_REFERENCE") or "",
+                "_TASK_ID":  tid,
+            })
+        display_df = pd.DataFrame(rows)
 
-        # Sort each person's tasks: open first
-        status_order = {"In Progress": 0, "Queued": 1, "On Hold": 2, "Closed": 3, "Cancelled": 4}
-        for name in person_tasks:
-            person_tasks[name].sort(key=lambda x: status_order.get(x[0].get("STATUS",""), 9))
+        st.caption(f"{len(display_df)} task(s) — click a row to edit")
 
-        # Alphabetical order
-        sorted_people = sorted(person_tasks.keys())
+        # Reset edit selection if user changed filters
+        sel_event = st.dataframe(
+            display_df.drop(columns=["_TASK_ID"]),
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key=f"tbl_{work_type}",
+            column_config={
+                "Status":   st.column_config.TextColumn("Status",   width="small"),
+                "Title":    st.column_config.TextColumn("Title",    width="large"),
+                "Assignee": st.column_config.TextColumn("Assignee", width="small"),
+                "Others":   st.column_config.TextColumn("Others",   width="small"),
+                "Effort":   st.column_config.NumberColumn("Effort", format="%.1f d", width="small"),
+                "%":        st.column_config.ProgressColumn("Done", min_value=0, max_value=100,
+                                                            format="%d%%", width="small"),
+                "Start":    st.column_config.DateColumn("Start",  width="small"),
+                "Closed":   st.column_config.DateColumn("Closed", width="small"),
+                "JIRA":     st.column_config.TextColumn("JIRA",   width="small"),
+            },
+            height=420,
+        )
 
-        st.markdown(f'<p class="note-meta">{len(tasks_df)} task(s) across {len(sorted_people)} assignee(s)</p>',
-                    unsafe_allow_html=True)
-
-        # Show selected person's tasks, or prompt to pick one
-        selected = st.session_state.get(f"sel_person_{work_type}", None)
-
-        # Render name buttons in a grid (5 per row)
-        cols_per_row = 5
-        for i in range(0, len(sorted_people), cols_per_row):
-            cols = st.columns(cols_per_row)
-            for j, col in enumerate(cols):
-                idx = i + j
-                if idx >= len(sorted_people):
-                    break
-                name = sorted_people[idx]
-                open_count = sum(1 for r, _ in person_tasks[name] if r.get("STATUS") in OPEN_STATUSES)
-                total = len(person_tasks[name])
-                btn_label = f"{name} ({open_count}/{total})"
-                with col:
-                    if st.button(btn_label, key=f"pb_{work_type}_{name}",
-                                 use_container_width=True):
-                        st.session_state[f"sel_person_{work_type}"] = name
-                        selected = name
-
-        if selected and selected in person_tasks:
-            tasks_list = person_tasks[selected]
-            open_count = sum(1 for r, _ in tasks_list if r.get("STATUS") in OPEN_STATUSES)
-            st.markdown(f'<div class="section-label">{_esc(selected)} — {open_count} open / {len(tasks_list)} total</div>',
-                        unsafe_allow_html=True)
-            for row, assignees in tasks_list:
-                render_task_card(row, assignees, work_type)
-        elif not selected:
-            st.caption("Click a name above to view their tasks.")
+        # Handle row selection -> open edit panel
+        try:
+            selected_rows = sel_event.selection.rows if sel_event else []
+        except Exception:
+            selected_rows = []
+        if selected_rows:
+            sel_idx = selected_rows[0]
+            sel_tid = int(display_df.iloc[sel_idx]["_TASK_ID"])
+            if st.session_state.get("edit_task_id") != sel_tid:
+                st.session_state["edit_task_id"] = sel_tid
+                st.rerun()
 
     render_edit_panel(work_type)
 
@@ -1268,45 +1337,78 @@ def render_stats_page():
     long_open = len(tasks[(tasks["STATUS"].isin(OPEN_STATUSES)) &
                           (tasks["_START"].apply(lambda d: d is not None and (today - d).days > 30))])
 
-    st.markdown('<div class="section-label">Key metrics</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">Key metrics — click to filter charts</div>',
+                unsafe_allow_html=True)
+
+    # Active filter
+    active = st.session_state.get("stats_filter", "all")
+
     m1, m2, m3, m4 = st.columns(4)
-    with m1: st.markdown(_metric_card(total_tasks, "Total tasks", "blue"), unsafe_allow_html=True)
-    with m2: st.markdown(_metric_card(open_tasks,  "Open", "teal"), unsafe_allow_html=True)
-    with m3: st.markdown(_metric_card(in_progress, "In progress", "purple"), unsafe_allow_html=True)
-    with m4: st.markdown(_metric_card(long_open, "Open >30 days", "red"), unsafe_allow_html=True)
+    def _kpi(col, count, label, color, key, val):
+        with col:
+            is_active = (active == val)
+            border_label = f"{label}  *" if is_active else label
+            st.markdown(_metric_card(count, border_label, color), unsafe_allow_html=True)
+            if st.button(f"{'Clear' if is_active else 'Filter'}", key=key, use_container_width=True):
+                st.session_state["stats_filter"] = "all" if is_active else val
+                st.rerun()
+    _kpi(m1, total_tasks, "Total tasks", "blue",   "kpi_all",  "all")
+    _kpi(m2, open_tasks,  "Open",        "teal",   "kpi_open", "open")
+    _kpi(m3, in_progress, "In progress", "purple", "kpi_ip",   "in_progress")
+    _kpi(m4, long_open,   "Open >30 days","red",   "kpi_stale","stale")
+
+    # Apply filter to a copy used by charts
+    chart_tasks = tasks.copy()
+    if active == "open":
+        chart_tasks = chart_tasks[chart_tasks["STATUS"].isin(OPEN_STATUSES)]
+    elif active == "in_progress":
+        chart_tasks = chart_tasks[chart_tasks["STATUS"] == "In Progress"]
+    elif active == "stale":
+        chart_tasks = chart_tasks[(chart_tasks["STATUS"].isin(OPEN_STATUSES)) &
+                                  (chart_tasks["_START"].apply(lambda d: d is not None and (today - d).days > 30))]
+
+    chart_assigns = assigns[assigns["TASK_ID"].isin(chart_tasks["TASK_ID"].tolist())] if not assigns.empty else assigns
+
+    if active != "all":
+        st.caption(f"Charts filtered to: **{active}** ({len(chart_tasks)} task(s))")
 
     st.markdown('<div class="section-label" style="margin-top:16px;">Charts</div>', unsafe_allow_html=True)
 
     # Chart 1 & 2
     ch1, ch2 = st.columns(2)
 
-    # Chart 1: Status distribution (stacked by work type)
+    # Chart 1: Status distribution (stacked by work type) — sorted descending (highest at top)
     with ch1:
         st.markdown("**Status Distribution (by work type)**")
         try:
-            piv = tasks.pivot_table(index="STATUS", columns="WORK_TYPE",
-                                    values="TASK_ID", aggfunc="count", fill_value=0)
-            piv = piv.reindex(STATUS_OPTIONS).fillna(0)
+            piv = chart_tasks.pivot_table(index="STATUS", columns="WORK_TYPE",
+                                          values="TASK_ID", aggfunc="count", fill_value=0)
             for wt in ["Enhancement","Automation"]:
                 if wt not in piv.columns: piv[wt] = 0
             piv = piv[["Enhancement","Automation"]]
             piv["_total"] = piv.sum(axis=1)
-            piv = piv.sort_values("_total", ascending=False).drop(columns=["_total"])
-            st.bar_chart(piv, horizontal=True, stack=True,
-                         color=["#3b82f6","#14b8a6"], height=350)
+            # ascending=True → highest appears at TOP in horizontal bar chart
+            piv = piv.sort_values("_total", ascending=True).drop(columns=["_total"])
+            if piv.empty or piv.values.sum() == 0:
+                st.info("No data for this filter.")
+            else:
+                st.bar_chart(piv, horizontal=True, stack=True,
+                             color=["#3b82f6","#14b8a6"], height=350)
         except Exception as e:
             st.caption(f"Chart error: {e}")
 
-    # Chart 2: Effort by primary assignee (top 10)
+    # Chart 2: Effort by primary assignee (top 10) — descending
     with ch2:
         st.markdown("**Effort Days by Assignee (top 10)**")
         try:
-            primary = assigns[assigns["ASSIGNEE_ROLE"] == "primary"].merge(
-                tasks[["TASK_ID","EFFORT_DAYS"]], on="TASK_ID", how="left")
+            primary = chart_assigns[chart_assigns["ASSIGNEE_ROLE"] == "primary"].merge(
+                chart_tasks[["TASK_ID","EFFORT_DAYS"]], on="TASK_ID", how="left")
             primary["EFFORT_DAYS"] = pd.to_numeric(primary["EFFORT_DAYS"], errors="coerce").fillna(0)
-            grp = primary.groupby("FULL_NAME")["EFFORT_DAYS"].sum().sort_values(ascending=False).head(10)
-            if grp.empty:
-                st.info("No effort data yet.")
+            # Take top 10 by effort, then re-sort ascending so highest appears at top
+            grp = primary.groupby("FULL_NAME")["EFFORT_DAYS"].sum()
+            grp = grp.sort_values(ascending=False).head(10).sort_values(ascending=True)
+            if grp.empty or grp.sum() == 0:
+                st.info("No effort data for this filter.")
             else:
                 df = grp.reset_index()
                 df.columns = ["Person", "Effort (Days)"]
@@ -1318,12 +1420,12 @@ def render_stats_page():
     # Chart 3 & 4
     ch3, ch4 = st.columns(2)
 
-    # Chart 3: Open tasks per person (stacked by status)
+    # Chart 3: Open tasks per person (stacked by status) — descending
     with ch3:
         st.markdown("**Open Tasks per Assignee**")
         try:
-            primary = assigns[assigns["ASSIGNEE_ROLE"] == "primary"].merge(
-                tasks[["TASK_ID","STATUS"]], on="TASK_ID", how="left")
+            primary = chart_assigns[chart_assigns["ASSIGNEE_ROLE"] == "primary"].merge(
+                chart_tasks[["TASK_ID","STATUS"]], on="TASK_ID", how="left")
             open_df = primary[primary["STATUS"].isin(OPEN_STATUSES)]
             if not open_df.empty:
                 piv = open_df.pivot_table(index="FULL_NAME", columns="STATUS",
@@ -1332,11 +1434,11 @@ def render_stats_page():
                     if s not in piv.columns: piv[s] = 0
                 piv = piv[OPEN_STATUSES]
                 piv["_total"] = piv.sum(axis=1)
-                piv = piv.sort_values("_total", ascending=False).drop(columns=["_total"])
+                piv = piv.sort_values("_total", ascending=True).drop(columns=["_total"])
                 st.bar_chart(piv, horizontal=True, stack=True,
                              color=["#60a5fa","#a78bfa","#fbbf24"], height=350)
             else:
-                st.info("No open tasks.")
+                st.info("No open tasks for this filter.")
         except Exception as e:
             st.caption(f"Chart error: {e}")
 
@@ -1344,7 +1446,7 @@ def render_stats_page():
     with ch4:
         st.markdown("**Closed Tasks per Month (last 6 months)**")
         try:
-            closed_df = tasks[(tasks["STATUS"] == "Closed") & (tasks["_CLOSED"].notna())].copy()
+            closed_df = chart_tasks[(chart_tasks["STATUS"] == "Closed") & (chart_tasks["_CLOSED"].notna())].copy()
             if not closed_df.empty:
                 closed_df["_MONTH"] = closed_df["_CLOSED"].apply(lambda d: d.replace(day=1))
                 cutoff = (today.replace(day=1) - pd.DateOffset(months=5)).date()
@@ -1356,7 +1458,7 @@ def render_stats_page():
                 by_month.index = [d.strftime("%b %Y") for d in by_month.index]
                 st.bar_chart(by_month, stack=True, color=["#3b82f6","#14b8a6"], height=350)
             else:
-                st.info("No closed tasks yet.")
+                st.info("No closed tasks for this filter.")
         except Exception as e:
             st.caption(f"Chart error: {e}")
 
