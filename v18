@@ -155,39 +155,37 @@ button:hover { background-color: #2a3040 !important; }
 .progress-inner { height:100%; border-radius:6px; }
 .main .block-container { padding-top: 1rem; padding-bottom: 1rem; max-width: 100%; }
 
-/* KPI buttons styled as cards — unified blue accent */
-.kpi-wrap [data-testid="stButton"] button {
-    background: linear-gradient(135deg, #0f2744 0%, #1a3a5c 100%) !important;
+/* KPI buttons styled as cards — sibling selector targets the button that follows the marker */
+[data-testid="stMarkdownContainer"]:has(.kpi-marker) ~ [data-testid="stButton"] button,
+[data-testid="stMarkdownContainer"]:has(.kpi-marker) ~ [data-testid="stElementContainer"] button,
+.kpi-marker + [data-testid="stButton"] button {
+    background: linear-gradient(135deg, #0f2744 0%, #1e4976 100%) !important;
     border: 1px solid #2563eb !important;
     border-left: 5px solid #3b82f6 !important;
     border-radius: 10px !important;
-    padding: 18px 18px !important;
+    padding: 18px !important;
     text-align: center !important;
     width: 100% !important;
     height: 110px !important;
     white-space: pre-line !important;
-    font-size: 28px !important;
+    font-size: 26px !important;
     font-weight: 700 !important;
     color: #ffffff !important;
     line-height: 1.3 !important;
-    transition: transform 0.1s, box-shadow 0.2s !important;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3) !important;
 }
-.kpi-wrap [data-testid="stButton"] button:hover {
-    transform: translateY(-2px) !important;
-    box-shadow: 0 4px 14px rgba(59, 130, 246, 0.35) !important;
-    background: linear-gradient(135deg, #1a3a5c 0%, #1e4976 100%) !important;
-}
-.kpi-wrap [data-testid="stButton"] button p {
-    font-size: 28px !important;
-    font-weight: 700 !important;
+[data-testid="stMarkdownContainer"]:has(.kpi-marker) ~ [data-testid="stButton"] button p,
+[data-testid="stMarkdownContainer"]:has(.kpi-marker) ~ [data-testid="stElementContainer"] button p {
     color: #ffffff !important;
+    font-size: 26px !important;
+    font-weight: 700 !important;
     margin: 0 !important;
-    line-height: 1.3 !important;
 }
-.kpi-active [data-testid="stButton"] button {
-    background: linear-gradient(135deg, #1e4976 0%, #2563eb 100%) !important;
-    border-color: #60a5fa !important;
-    box-shadow: 0 0 0 2px #60a5fa !important;
+[data-testid="stMarkdownContainer"]:has(.kpi-marker-active) ~ [data-testid="stButton"] button,
+[data-testid="stMarkdownContainer"]:has(.kpi-marker-active) ~ [data-testid="stElementContainer"] button {
+    background: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%) !important;
+    border-color: #93c5fd !important;
+    box-shadow: 0 0 0 2px #60a5fa, 0 4px 12px rgba(59,130,246,0.5) !important;
 }
 
 /* Green "Add new task" button */
@@ -1358,80 +1356,41 @@ def render_work_type_page(work_type):
                 "_TASK_ID":  tid,
             })
         display_df = pd.DataFrame(rows)
-        total_rows = len(display_df)
 
-        # Pagination
-        page_size = 25
-        total_pages = max(1, (total_rows + page_size - 1) // page_size)
-        page_key = f"page_{work_type}"
-        if page_key not in st.session_state:
-            st.session_state[page_key] = 1
-        if st.session_state[page_key] > total_pages:
-            st.session_state[page_key] = 1
+        st.caption(f"{len(display_df)} task(s) — tick the checkbox on any row to edit it below")
 
-        st.caption(f"{total_rows} task(s) — click the yellow **Edit** button on any row")
+        sel_event = st.dataframe(
+            display_df.drop(columns=["_TASK_ID"]),
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key=f"tbl_{work_type}",
+            column_config={
+                "Status":   st.column_config.TextColumn("Status",   width="small"),
+                "Title":    st.column_config.TextColumn("Title",    width="large"),
+                "Assignee": st.column_config.TextColumn("Assignee", width="small"),
+                "Others":   st.column_config.TextColumn("Others",   width="small"),
+                "Effort":   st.column_config.NumberColumn("Effort", format="%.1f d", width="small"),
+                "%":        st.column_config.ProgressColumn("Done", min_value=0, max_value=100,
+                                                            format="%d%%", width="small"),
+                "Start":    st.column_config.DateColumn("Start",  width="small"),
+                "Closed":   st.column_config.DateColumn("Closed", width="small"),
+                "JIRA":     st.column_config.TextColumn("JIRA",   width="small"),
+            },
+            height=480,
+        )
 
-        start = (st.session_state[page_key] - 1) * page_size
-        end   = min(start + page_size, total_rows)
-        page_df = display_df.iloc[start:end]
-
-        # Header row
-        col_widths = [0.7, 1.0, 3.2, 1.2, 0.7, 0.7, 1.0, 1.0]
-        h = st.columns(col_widths)
-        h[0].markdown('<div class="task-row-header">Edit</div>', unsafe_allow_html=True)
-        h[1].markdown('<div class="task-row-header">Status</div>', unsafe_allow_html=True)
-        h[2].markdown('<div class="task-row-header">Title</div>', unsafe_allow_html=True)
-        h[3].markdown('<div class="task-row-header">Assignee</div>', unsafe_allow_html=True)
-        h[4].markdown('<div class="task-row-header">Effort</div>', unsafe_allow_html=True)
-        h[5].markdown('<div class="task-row-header">%</div>', unsafe_allow_html=True)
-        h[6].markdown('<div class="task-row-header">Start</div>', unsafe_allow_html=True)
-        h[7].markdown('<div class="task-row-header">Closed</div>', unsafe_allow_html=True)
-
-        # Rows
-        for _, r in page_df.iterrows():
-            tid = int(r["_TASK_ID"])
-            cols = st.columns(col_widths)
-            with cols[0]:
-                st.markdown('<div class="row-edit">', unsafe_allow_html=True)
-                if st.button("Edit", key=f"edit_btn_{work_type}_{tid}"):
-                    st.session_state["edit_task_id"] = tid
-                    st.rerun()
-                st.markdown('</div>', unsafe_allow_html=True)
-            cols[1].markdown(f'<div class="task-row">{_status_badge(r["Status"])}</div>', unsafe_allow_html=True)
-            cols[2].markdown(f'<div class="task-row">{_esc(r["Title"])}</div>', unsafe_allow_html=True)
-            assignee_text = _esc(r["Assignee"])
-            if r["Others"]:
-                assignee_text += f' <span style="color:#8b95a5;font-size:11px;">+ {_esc(r["Others"])}</span>'
-            cols[3].markdown(f'<div class="task-row">{assignee_text}</div>', unsafe_allow_html=True)
-            cols[4].markdown(f'<div class="task-row">{r["Effort"]:.1f}d</div>', unsafe_allow_html=True)
-            cols[5].markdown(f'<div class="task-row">{r["%"]}%</div>', unsafe_allow_html=True)
-            cols[6].markdown(f'<div class="task-row">{_esc(r["Start"]) or "—"}</div>', unsafe_allow_html=True)
-            cols[7].markdown(f'<div class="task-row">{_esc(r["Closed"]) or "—"}</div>', unsafe_allow_html=True)
-
-        # Pagination controls
-        if total_pages > 1:
-            pc1, pc2, pc3 = st.columns([1, 2, 1])
-            with pc1:
-                if st.button("< Previous", key=f"prev_{work_type}",
-                             disabled=st.session_state[page_key] <= 1,
-                             use_container_width=True):
-                    st.session_state[page_key] -= 1
-                    st.rerun()
-            with pc2:
-                new_page = st.number_input(f"Page {st.session_state[page_key]} of {total_pages}",
-                                           min_value=1, max_value=total_pages,
-                                           value=st.session_state[page_key],
-                                           key=f"pgnum_{work_type}",
-                                           label_visibility="collapsed")
-                if new_page != st.session_state[page_key]:
-                    st.session_state[page_key] = int(new_page)
-                    st.rerun()
-            with pc3:
-                if st.button("Next >", key=f"next_{work_type}",
-                             disabled=st.session_state[page_key] >= total_pages,
-                             use_container_width=True):
-                    st.session_state[page_key] += 1
-                    st.rerun()
+        try:
+            selected_rows = sel_event.selection.rows if sel_event else []
+        except Exception:
+            selected_rows = []
+        if selected_rows:
+            sel_idx = selected_rows[0]
+            sel_tid = int(display_df.iloc[sel_idx]["_TASK_ID"])
+            if st.session_state.get("edit_task_id") != sel_tid:
+                st.session_state["edit_task_id"] = sel_tid
+                st.rerun()
 
     render_edit_panel(work_type)
 
@@ -1478,13 +1437,12 @@ def render_stats_page():
 
     def _kpi_card(col, count, label, val):
         with col:
-            classes = "kpi-wrap" + (" kpi-active" if active == val else "")
-            st.markdown(f'<div class="{classes}">', unsafe_allow_html=True)
+            marker_cls = "kpi-marker-active" if active == val else "kpi-marker"
+            st.markdown(f'<span class="{marker_cls}"></span>', unsafe_allow_html=True)
             btn_label = f"{count}\n{label}"
             if st.button(btn_label, key=f"kpi_{val}", use_container_width=True):
                 st.session_state["stats_filter"] = "all" if active == val else val
                 st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
 
     m1, m2, m3, m4 = st.columns(4)
     _kpi_card(m1, total_tasks, "Total tasks",   "all")
