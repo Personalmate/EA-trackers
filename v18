@@ -154,6 +154,66 @@ button:hover { background-color: #2a3040 !important; }
 .progress-outer { background:#1c2030; border-radius:6px; height:6px; width:100%; overflow:hidden; margin: 4px 0; }
 .progress-inner { height:100%; border-radius:6px; }
 .main .block-container { padding-top: 1rem; padding-bottom: 1rem; max-width: 100%; }
+
+/* KPI buttons styled as cards */
+.kpi-wrap [data-testid="stButton"] button {
+    background: #161b22 !important;
+    border: 1px solid #2a3040 !important;
+    border-radius: 10px !important;
+    padding: 18px 18px !important;
+    text-align: center !important;
+    width: 100% !important;
+    height: 100px !important;
+    white-space: pre-line !important;
+    font-size: 13px !important;
+    color: #8b95a5 !important;
+    line-height: 1.4 !important;
+    transition: transform 0.1s, border-color 0.2s !important;
+}
+.kpi-wrap [data-testid="stButton"] button:hover {
+    transform: translateY(-2px) !important;
+    border-color: #3b82f6 !important;
+}
+.kpi-wrap [data-testid="stButton"] button p {
+    font-size: 13px !important; color: #8b95a5 !important;
+    text-transform: uppercase !important; letter-spacing: 0.6px !important;
+    margin: 0 !important;
+}
+.kpi-blue   [data-testid="stButton"] button { border-left: 4px solid #3b82f6 !important; }
+.kpi-teal   [data-testid="stButton"] button { border-left: 4px solid #14b8a6 !important; }
+.kpi-purple [data-testid="stButton"] button { border-left: 4px solid #a78bfa !important; }
+.kpi-red    [data-testid="stButton"] button { border-left: 4px solid #ef4444 !important; }
+.kpi-active [data-testid="stButton"] button {
+    background: #1e293b !important;
+    border-color: #3b82f6 !important;
+    box-shadow: 0 0 0 1px #3b82f6 !important;
+}
+
+/* Green "Add new task" button */
+.add-task-wrap [data-testid="stButton"] button {
+    background: linear-gradient(135deg, #22c55e, #16a34a) !important;
+    color: #fff !important;
+    border: none !important;
+    font-weight: 600 !important;
+    font-size: 15px !important;
+    padding: 12px 24px !important;
+    border-radius: 8px !important;
+}
+.add-task-wrap [data-testid="stButton"] button:hover {
+    background: linear-gradient(135deg, #16a34a, #15803d) !important;
+}
+
+/* Edit panel highlight */
+.edit-panel-header {
+    background: linear-gradient(135deg, #1e3a5f, #0f2744);
+    border-left: 4px solid #3b82f6;
+    border-radius: 8px;
+    padding: 12px 18px;
+    margin: 16px 0 12px 0;
+    color: #fff;
+    font-size: 16px;
+    font-weight: 600;
+}
 </style>""", unsafe_allow_html=True)
 
 
@@ -754,8 +814,11 @@ def render_edit_panel(work_type):
         if not m.empty:
             current_reviewer = m["FULL_NAME"].iloc[0]
 
-    st.markdown("---")
-    st.markdown(f'<div class="section-label">Editing Task #{int(tid)}</div>', unsafe_allow_html=True)
+    title_preview = str(r.get("TITLE") or "")[:80]
+    st.markdown(
+        f'<div class="edit-panel-header">Editing: {_esc(title_preview)}</div>',
+        unsafe_allow_html=True,
+    )
 
     names = [""] + members_df["FULL_NAME"].tolist()
 
@@ -794,9 +857,13 @@ def render_edit_panel(work_type):
                                      key=f"ed_pct_{tid}")
         ed_jira    = st.text_input("JIRA / Reference", value=str(r.get("JIRA_REFERENCE") or ""), key=f"ed_jira_{tid}")
 
-    # New note input
-    new_note = st.text_input("Add a note (optional)", placeholder="Type your update...",
-                             key=f"ed_newnote_{tid}")
+    # New note input — prominent section
+    st.markdown('<div class="section-label" style="margin-top:14px;">Add a progress note</div>',
+                unsafe_allow_html=True)
+    new_note = st.text_area("New note (saved when you click Save)",
+                            placeholder="Type your update here...",
+                            height=80, key=f"ed_newnote_{tid}",
+                            label_visibility="collapsed")
 
     bc1, bc2, bc3 = st.columns(3)
     with bc1:
@@ -1150,23 +1217,25 @@ def render_import_section(work_type):
 # WORK-TYPE PAGE RENDERER (Enhancements / Automation)
 # ============================================================
 def render_work_type_page(work_type):
-    # ---- Add new task (button toggle) ----
+    # ---- Add new task (centered green button toggle) ----
     show_add_key = f"show_add_{work_type}"
     if show_add_key not in st.session_state:
         st.session_state[show_add_key] = False
 
-    btn_col, _ = st.columns([1, 4])
+    spacer_l, btn_col, spacer_r = st.columns([2, 1, 2])
     with btn_col:
+        st.markdown('<div class="add-task-wrap">', unsafe_allow_html=True)
         if st.session_state[show_add_key]:
-            if st.button(f"- Hide add form", key=f"toggle_add_{work_type}",
-                         type="secondary", use_container_width=True):
+            if st.button("Hide form", key=f"toggle_add_{work_type}",
+                         use_container_width=True):
                 st.session_state[show_add_key] = False
                 st.rerun()
         else:
-            if st.button(f"+ Add new {work_type} task", key=f"toggle_add_{work_type}",
-                         type="primary", use_container_width=True):
+            if st.button("Add new task", key=f"toggle_add_{work_type}",
+                         use_container_width=True):
                 st.session_state[show_add_key] = True
                 st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
     if st.session_state[show_add_key]:
         with st.form(f"add_form_{work_type}", clear_on_submit=True):
@@ -1212,15 +1281,15 @@ def render_work_type_page(work_type):
                     else:
                         st.error(msg)
 
-    # ---- Filters: status, assignee, search ----
+    # ---- Filters: assignee, status, search ----
     st.markdown(f'<div class="section-label" style="margin-top:14px;">All {work_type} tasks</div>',
                 unsafe_allow_html=True)
     fc1, fc2, fc3 = st.columns([1, 1, 2])
     with fc1:
-        status_f = st.selectbox("Status", ["All"] + STATUS_OPTIONS, key=f"sf_{work_type}")
-    with fc2:
         assignee_f = st.selectbox("Assignee", ["All"] + members_df["FULL_NAME"].tolist(),
                                   key=f"af_{work_type}")
+    with fc2:
+        status_f = st.selectbox("Status", ["All"] + STATUS_OPTIONS, key=f"sf_{work_type}")
     with fc3:
         search = st.text_input("Search", key=f"srch_{work_type}",
                                placeholder="title, reason, platform, JIRA...")
@@ -1337,25 +1406,26 @@ def render_stats_page():
     long_open = len(tasks[(tasks["STATUS"].isin(OPEN_STATUSES)) &
                           (tasks["_START"].apply(lambda d: d is not None and (today - d).days > 30))])
 
-    st.markdown('<div class="section-label">Key metrics — click to filter charts</div>',
+    st.markdown('<div class="section-label">Key metrics — click any card to filter the charts below</div>',
                 unsafe_allow_html=True)
 
-    # Active filter
     active = st.session_state.get("stats_filter", "all")
 
-    m1, m2, m3, m4 = st.columns(4)
-    def _kpi(col, count, label, color, key, val):
+    def _kpi_card(col, count, label, color, val):
         with col:
-            is_active = (active == val)
-            border_label = f"{label}  *" if is_active else label
-            st.markdown(_metric_card(count, border_label, color), unsafe_allow_html=True)
-            if st.button(f"{'Clear' if is_active else 'Filter'}", key=key, use_container_width=True):
-                st.session_state["stats_filter"] = "all" if is_active else val
+            classes = f"kpi-wrap kpi-{color}" + (" kpi-active" if active == val else "")
+            st.markdown(f'<div class="{classes}">', unsafe_allow_html=True)
+            btn_label = f"{count}\n{label}"
+            if st.button(btn_label, key=f"kpi_{val}", use_container_width=True):
+                st.session_state["stats_filter"] = "all" if active == val else val
                 st.rerun()
-    _kpi(m1, total_tasks, "Total tasks", "blue",   "kpi_all",  "all")
-    _kpi(m2, open_tasks,  "Open",        "teal",   "kpi_open", "open")
-    _kpi(m3, in_progress, "In progress", "purple", "kpi_ip",   "in_progress")
-    _kpi(m4, long_open,   "Open >30 days","red",   "kpi_stale","stale")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    m1, m2, m3, m4 = st.columns(4)
+    _kpi_card(m1, total_tasks, "Total tasks",   "blue",   "all")
+    _kpi_card(m2, open_tasks,  "Open",          "teal",   "open")
+    _kpi_card(m3, in_progress, "In progress",   "purple", "in_progress")
+    _kpi_card(m4, long_open,   "Open >30 days", "red",    "stale")
 
     # Apply filter to a copy used by charts
     chart_tasks = tasks.copy()
