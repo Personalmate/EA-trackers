@@ -155,38 +155,39 @@ button:hover { background-color: #2a3040 !important; }
 .progress-inner { height:100%; border-radius:6px; }
 .main .block-container { padding-top: 1rem; padding-bottom: 1rem; max-width: 100%; }
 
-/* KPI buttons styled as cards */
+/* KPI buttons styled as cards — unified blue accent */
 .kpi-wrap [data-testid="stButton"] button {
-    background: #161b22 !important;
-    border: 1px solid #2a3040 !important;
+    background: linear-gradient(135deg, #0f2744 0%, #1a3a5c 100%) !important;
+    border: 1px solid #2563eb !important;
+    border-left: 5px solid #3b82f6 !important;
     border-radius: 10px !important;
     padding: 18px 18px !important;
     text-align: center !important;
     width: 100% !important;
-    height: 100px !important;
+    height: 110px !important;
     white-space: pre-line !important;
-    font-size: 13px !important;
-    color: #8b95a5 !important;
-    line-height: 1.4 !important;
-    transition: transform 0.1s, border-color 0.2s !important;
+    font-size: 28px !important;
+    font-weight: 700 !important;
+    color: #ffffff !important;
+    line-height: 1.3 !important;
+    transition: transform 0.1s, box-shadow 0.2s !important;
 }
 .kpi-wrap [data-testid="stButton"] button:hover {
     transform: translateY(-2px) !important;
-    border-color: #3b82f6 !important;
+    box-shadow: 0 4px 14px rgba(59, 130, 246, 0.35) !important;
+    background: linear-gradient(135deg, #1a3a5c 0%, #1e4976 100%) !important;
 }
 .kpi-wrap [data-testid="stButton"] button p {
-    font-size: 13px !important; color: #8b95a5 !important;
-    text-transform: uppercase !important; letter-spacing: 0.6px !important;
+    font-size: 28px !important;
+    font-weight: 700 !important;
+    color: #ffffff !important;
     margin: 0 !important;
+    line-height: 1.3 !important;
 }
-.kpi-blue   [data-testid="stButton"] button { border-left: 4px solid #3b82f6 !important; }
-.kpi-teal   [data-testid="stButton"] button { border-left: 4px solid #14b8a6 !important; }
-.kpi-purple [data-testid="stButton"] button { border-left: 4px solid #a78bfa !important; }
-.kpi-red    [data-testid="stButton"] button { border-left: 4px solid #ef4444 !important; }
 .kpi-active [data-testid="stButton"] button {
-    background: #1e293b !important;
-    border-color: #3b82f6 !important;
-    box-shadow: 0 0 0 1px #3b82f6 !important;
+    background: linear-gradient(135deg, #1e4976 0%, #2563eb 100%) !important;
+    border-color: #60a5fa !important;
+    box-shadow: 0 0 0 2px #60a5fa !important;
 }
 
 /* Green "Add new task" button */
@@ -201,6 +202,36 @@ button:hover { background-color: #2a3040 !important; }
 }
 .add-task-wrap [data-testid="stButton"] button:hover {
     background: linear-gradient(135deg, #16a34a, #15803d) !important;
+}
+
+/* Yellow edit button per row */
+.row-edit [data-testid="stButton"] button {
+    background: #facc15 !important;
+    color: #1a1a1a !important;
+    border: none !important;
+    padding: 2px 10px !important;
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    border-radius: 4px !important;
+    min-height: 26px !important;
+    height: 26px !important;
+}
+.row-edit [data-testid="stButton"] button:hover {
+    background: #eab308 !important;
+}
+.task-row {
+    border-bottom: 1px solid #2a3040;
+    padding: 4px 0;
+    font-size: 12px;
+}
+.task-row-header {
+    border-bottom: 2px solid #3b82f6;
+    padding: 6px 0;
+    font-size: 11px;
+    font-weight: 700;
+    color: #8b95a5;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
 /* Edit panel highlight */
@@ -1327,43 +1358,80 @@ def render_work_type_page(work_type):
                 "_TASK_ID":  tid,
             })
         display_df = pd.DataFrame(rows)
+        total_rows = len(display_df)
 
-        st.caption(f"{len(display_df)} task(s) — click a row to edit")
+        # Pagination
+        page_size = 25
+        total_pages = max(1, (total_rows + page_size - 1) // page_size)
+        page_key = f"page_{work_type}"
+        if page_key not in st.session_state:
+            st.session_state[page_key] = 1
+        if st.session_state[page_key] > total_pages:
+            st.session_state[page_key] = 1
 
-        # Reset edit selection if user changed filters
-        sel_event = st.dataframe(
-            display_df.drop(columns=["_TASK_ID"]),
-            use_container_width=True,
-            hide_index=True,
-            on_select="rerun",
-            selection_mode="single-row",
-            key=f"tbl_{work_type}",
-            column_config={
-                "Status":   st.column_config.TextColumn("Status",   width="small"),
-                "Title":    st.column_config.TextColumn("Title",    width="large"),
-                "Assignee": st.column_config.TextColumn("Assignee", width="small"),
-                "Others":   st.column_config.TextColumn("Others",   width="small"),
-                "Effort":   st.column_config.NumberColumn("Effort", format="%.1f d", width="small"),
-                "%":        st.column_config.ProgressColumn("Done", min_value=0, max_value=100,
-                                                            format="%d%%", width="small"),
-                "Start":    st.column_config.DateColumn("Start",  width="small"),
-                "Closed":   st.column_config.DateColumn("Closed", width="small"),
-                "JIRA":     st.column_config.TextColumn("JIRA",   width="small"),
-            },
-            height=420,
-        )
+        st.caption(f"{total_rows} task(s) — click the yellow **Edit** button on any row")
 
-        # Handle row selection -> open edit panel
-        try:
-            selected_rows = sel_event.selection.rows if sel_event else []
-        except Exception:
-            selected_rows = []
-        if selected_rows:
-            sel_idx = selected_rows[0]
-            sel_tid = int(display_df.iloc[sel_idx]["_TASK_ID"])
-            if st.session_state.get("edit_task_id") != sel_tid:
-                st.session_state["edit_task_id"] = sel_tid
-                st.rerun()
+        start = (st.session_state[page_key] - 1) * page_size
+        end   = min(start + page_size, total_rows)
+        page_df = display_df.iloc[start:end]
+
+        # Header row
+        col_widths = [0.7, 1.0, 3.2, 1.2, 0.7, 0.7, 1.0, 1.0]
+        h = st.columns(col_widths)
+        h[0].markdown('<div class="task-row-header">Edit</div>', unsafe_allow_html=True)
+        h[1].markdown('<div class="task-row-header">Status</div>', unsafe_allow_html=True)
+        h[2].markdown('<div class="task-row-header">Title</div>', unsafe_allow_html=True)
+        h[3].markdown('<div class="task-row-header">Assignee</div>', unsafe_allow_html=True)
+        h[4].markdown('<div class="task-row-header">Effort</div>', unsafe_allow_html=True)
+        h[5].markdown('<div class="task-row-header">%</div>', unsafe_allow_html=True)
+        h[6].markdown('<div class="task-row-header">Start</div>', unsafe_allow_html=True)
+        h[7].markdown('<div class="task-row-header">Closed</div>', unsafe_allow_html=True)
+
+        # Rows
+        for _, r in page_df.iterrows():
+            tid = int(r["_TASK_ID"])
+            cols = st.columns(col_widths)
+            with cols[0]:
+                st.markdown('<div class="row-edit">', unsafe_allow_html=True)
+                if st.button("Edit", key=f"edit_btn_{work_type}_{tid}"):
+                    st.session_state["edit_task_id"] = tid
+                    st.rerun()
+                st.markdown('</div>', unsafe_allow_html=True)
+            cols[1].markdown(f'<div class="task-row">{_status_badge(r["Status"])}</div>', unsafe_allow_html=True)
+            cols[2].markdown(f'<div class="task-row">{_esc(r["Title"])}</div>', unsafe_allow_html=True)
+            assignee_text = _esc(r["Assignee"])
+            if r["Others"]:
+                assignee_text += f' <span style="color:#8b95a5;font-size:11px;">+ {_esc(r["Others"])}</span>'
+            cols[3].markdown(f'<div class="task-row">{assignee_text}</div>', unsafe_allow_html=True)
+            cols[4].markdown(f'<div class="task-row">{r["Effort"]:.1f}d</div>', unsafe_allow_html=True)
+            cols[5].markdown(f'<div class="task-row">{r["%"]}%</div>', unsafe_allow_html=True)
+            cols[6].markdown(f'<div class="task-row">{_esc(r["Start"]) or "—"}</div>', unsafe_allow_html=True)
+            cols[7].markdown(f'<div class="task-row">{_esc(r["Closed"]) or "—"}</div>', unsafe_allow_html=True)
+
+        # Pagination controls
+        if total_pages > 1:
+            pc1, pc2, pc3 = st.columns([1, 2, 1])
+            with pc1:
+                if st.button("< Previous", key=f"prev_{work_type}",
+                             disabled=st.session_state[page_key] <= 1,
+                             use_container_width=True):
+                    st.session_state[page_key] -= 1
+                    st.rerun()
+            with pc2:
+                new_page = st.number_input(f"Page {st.session_state[page_key]} of {total_pages}",
+                                           min_value=1, max_value=total_pages,
+                                           value=st.session_state[page_key],
+                                           key=f"pgnum_{work_type}",
+                                           label_visibility="collapsed")
+                if new_page != st.session_state[page_key]:
+                    st.session_state[page_key] = int(new_page)
+                    st.rerun()
+            with pc3:
+                if st.button("Next >", key=f"next_{work_type}",
+                             disabled=st.session_state[page_key] >= total_pages,
+                             use_container_width=True):
+                    st.session_state[page_key] += 1
+                    st.rerun()
 
     render_edit_panel(work_type)
 
@@ -1406,14 +1474,11 @@ def render_stats_page():
     long_open = len(tasks[(tasks["STATUS"].isin(OPEN_STATUSES)) &
                           (tasks["_START"].apply(lambda d: d is not None and (today - d).days > 30))])
 
-    st.markdown('<div class="section-label">Key metrics — click any card to filter the charts below</div>',
-                unsafe_allow_html=True)
-
     active = st.session_state.get("stats_filter", "all")
 
-    def _kpi_card(col, count, label, color, val):
+    def _kpi_card(col, count, label, val):
         with col:
-            classes = f"kpi-wrap kpi-{color}" + (" kpi-active" if active == val else "")
+            classes = "kpi-wrap" + (" kpi-active" if active == val else "")
             st.markdown(f'<div class="{classes}">', unsafe_allow_html=True)
             btn_label = f"{count}\n{label}"
             if st.button(btn_label, key=f"kpi_{val}", use_container_width=True):
@@ -1422,10 +1487,10 @@ def render_stats_page():
             st.markdown('</div>', unsafe_allow_html=True)
 
     m1, m2, m3, m4 = st.columns(4)
-    _kpi_card(m1, total_tasks, "Total tasks",   "blue",   "all")
-    _kpi_card(m2, open_tasks,  "Open",          "teal",   "open")
-    _kpi_card(m3, in_progress, "In progress",   "purple", "in_progress")
-    _kpi_card(m4, long_open,   "Open >30 days", "red",    "stale")
+    _kpi_card(m1, total_tasks, "Total tasks",   "all")
+    _kpi_card(m2, open_tasks,  "Open",          "open")
+    _kpi_card(m3, in_progress, "In progress",   "in_progress")
+    _kpi_card(m4, long_open,   "Open >30 days", "stale")
 
     # Apply filter to a copy used by charts
     chart_tasks = tasks.copy()
@@ -1442,7 +1507,7 @@ def render_stats_page():
     if active != "all":
         st.caption(f"Charts filtered to: **{active}** ({len(chart_tasks)} task(s))")
 
-    st.markdown('<div class="section-label" style="margin-top:16px;">Charts</div>', unsafe_allow_html=True)
+    st.markdown("<div style='margin-top:16px;'></div>", unsafe_allow_html=True)
 
     # Chart 1 & 2
     ch1, ch2 = st.columns(2)
