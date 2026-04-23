@@ -1433,6 +1433,9 @@ def render_stats_page():
     long_open = len(tasks[(tasks["STATUS"].isin(OPEN_STATUSES)) &
                           (tasks["_START"].apply(lambda d: d is not None and (today - d).days > 30))])
 
+    queued     = len(tasks[tasks["STATUS"] == "Queued"])
+    cancelled  = len(tasks[tasks["STATUS"] == "Cancelled"])
+
     active = st.session_state.get("stats_filter", "all")
 
     def _kpi_card(col, count, label, val):
@@ -1444,60 +1447,38 @@ def render_stats_page():
                 st.session_state["stats_filter"] = "all" if active == val else val
                 st.rerun()
 
-    m1, m2, m3, m4 = st.columns(4)
-    _kpi_card(m1, total_tasks, "Total tasks",   "all")
-    _kpi_card(m2, open_tasks,  "Open",          "open")
-    _kpi_card(m3, in_progress, "In progress",   "in_progress")
-    _kpi_card(m4, long_open,   "Open >30 days", "stale")
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
+    _kpi_card(m1, total_tasks, "Total tasks",  "all")
+    _kpi_card(m2, in_progress, "In Progress",  "in_progress")
+    _kpi_card(m3, on_hold,     "On Hold",      "on_hold")
+    _kpi_card(m4, queued,      "Queued",       "queued")
+    _kpi_card(m5, cancelled,   "Cancelled",    "cancelled")
+    _kpi_card(m6, closed_all,  "Closed",       "closed")
 
     # Apply filter to a copy used by charts
     chart_tasks = tasks.copy()
-    if active == "open":
-        chart_tasks = chart_tasks[chart_tasks["STATUS"].isin(OPEN_STATUSES)]
-    elif active == "in_progress":
-        chart_tasks = chart_tasks[chart_tasks["STATUS"] == "In Progress"]
-    elif active == "stale":
-        chart_tasks = chart_tasks[(chart_tasks["STATUS"].isin(OPEN_STATUSES)) &
-                                  (chart_tasks["_START"].apply(lambda d: d is not None and (today - d).days > 30))]
+    status_map = {
+        "in_progress": "In Progress", "on_hold": "On Hold",
+        "queued": "Queued", "cancelled": "Cancelled", "closed": "Closed",
+    }
+    if active in status_map:
+        chart_tasks = chart_tasks[chart_tasks["STATUS"] == status_map[active]]
 
     chart_assigns = assigns[assigns["TASK_ID"].isin(chart_tasks["TASK_ID"].tolist())] if not assigns.empty else assigns
 
     if active != "all":
-        st.caption(f"Charts filtered to: **{active}** ({len(chart_tasks)} task(s))")
+        st.caption(f"Charts filtered to: **{status_map.get(active, active)}** ({len(chart_tasks)} task(s))")
 
     st.markdown("<div style='margin-top:16px;'></div>", unsafe_allow_html=True)
 
-    # Chart 1 & 2
+    # ==== Chart 1: Total Effort Days by Team Member (top 10) ====
     ch1, ch2 = st.columns(2)
-
-    # Chart 1: Status distribution (stacked by work type) — sorted descending (highest at top)
     with ch1:
-        st.markdown("**Status Distribution (by work type)**")
-        try:
-            piv = chart_tasks.pivot_table(index="STATUS", columns="WORK_TYPE",
-                                          values="TASK_ID", aggfunc="count", fill_value=0)
-            for wt in ["Enhancement","Automation"]:
-                if wt not in piv.columns: piv[wt] = 0
-            piv = piv[["Enhancement","Automation"]]
-            piv["_total"] = piv.sum(axis=1)
-            # ascending=True → highest appears at TOP in horizontal bar chart
-            piv = piv.sort_values("_total", ascending=True).drop(columns=["_total"])
-            if piv.empty or piv.values.sum() == 0:
-                st.info("No data for this filter.")
-            else:
-                st.bar_chart(piv, horizontal=True, stack=True,
-                             color=["#3b82f6","#14b8a6"], height=350)
-        except Exception as e:
-            st.caption(f"Chart error: {e}")
-
-    # Chart 2: Effort by primary assignee (top 10) — descending
-    with ch2:
-        st.markdown("**Effort Days by Assignee (top 10)**")
+        st.markdown("**Total Effort Days by Team Member**")
         try:
             primary = chart_assigns[chart_assigns["ASSIGNEE_ROLE"] == "primary"].merge(
                 chart_tasks[["TASK_ID","EFFORT_DAYS"]], on="TASK_ID", how="left")
             primary["EFFORT_DAYS"] = pd.to_numeric(primary["EFFORT_DAYS"], errors="coerce").fillna(0)
-            # Take top 10 by effort, then re-sort ascending so highest appears at top
             grp = primary.groupby("FULL_NAME")["EFFORT_DAYS"].sum()
             grp = grp.sort_values(ascending=False).head(10).sort_values(ascending=True)
             if grp.empty or grp.sum() == 0:
@@ -1510,12 +1491,9 @@ def render_stats_page():
         except Exception as e:
             st.caption(f"Chart error: {e}")
 
-    # Chart 3 & 4
-    ch3, ch4 = st.columns(2)
-
-    # Chart 3: Open tasks per person (stacked by status) — descending
-    with ch3:
-        st.markdown("**Open Tasks per Assignee**")
+    # ==== Chart 2: Open Tasks by Team Member (stacked by status) ====
+    with ch2:
+        st.markdown("**Open Tasks by Team Member**")
         try:
             primary = chart_assigns[chart_assigns["ASSIGNEE_ROLE"] == "primary"].merge(
                 chart_tasks[["TASK_ID","STATUS"]], on="TASK_ID", how="left")
@@ -1535,20 +1513,43 @@ def render_stats_page():
         except Exception as e:
             st.caption(f"Chart error: {e}")
 
-    # Chart 4: Monthly closure throughput (last 6 months)
+    # ==== Chart 3: Total Effort by Team by Month (vertical bars; horizontal x-axis labels) ====
+    ch3, ch4 = st.columns(2)
+    with ch3:
+        st.markdown("**Total Effort Days by Team by Month**")
+        try:
+            # Use START_DATE to bucket effort into months
+            ef_df = chart_tasks[chart_tasks["_START"].notna()].copy()
+            ef_df["EFFORT_DAYS"] = pd.to_numeric(ef_df["EFFORT_DAYS"], errors="coerce").fillna(0)
+            if ef_df.empty or ef_df["EFFORT_DAYS"].sum() == 0:
+                st.info("No effort data yet.")
+            else:
+                ef_df["_MONTH"] = ef_df["_START"].apply(lambda d: d.replace(day=1))
+                cutoff = (today.replace(day=1) - pd.DateOffset(months=11)).date()
+                ef_df = ef_df[ef_df["_MONTH"] >= cutoff]
+                by_month = ef_df.groupby(["_MONTH","WORK_TYPE"])["EFFORT_DAYS"].sum().unstack(fill_value=0)
+                for wt in ["Enhancement","Automation"]:
+                    if wt not in by_month.columns: by_month[wt] = 0
+                by_month = by_month[["Enhancement","Automation"]].sort_index()
+                by_month.index = [d.strftime("%b %y").upper() for d in by_month.index]
+                st.bar_chart(by_month, stack=True, color=["#3b82f6","#14b8a6"], height=350)
+        except Exception as e:
+            st.caption(f"Chart error: {e}")
+
+    # ==== Chart 4: Closed Tasks per Month by Team (vertical bars; horizontal x-axis labels) ====
     with ch4:
-        st.markdown("**Closed Tasks per Month (last 6 months)**")
+        st.markdown("**Closed Tasks per Month by Team**")
         try:
             closed_df = chart_tasks[(chart_tasks["STATUS"] == "Closed") & (chart_tasks["_CLOSED"].notna())].copy()
             if not closed_df.empty:
                 closed_df["_MONTH"] = closed_df["_CLOSED"].apply(lambda d: d.replace(day=1))
-                cutoff = (today.replace(day=1) - pd.DateOffset(months=5)).date()
+                cutoff = (today.replace(day=1) - pd.DateOffset(months=11)).date()
                 closed_df = closed_df[closed_df["_MONTH"] >= cutoff]
                 by_month = closed_df.groupby(["_MONTH","WORK_TYPE"])["TASK_ID"].count().unstack(fill_value=0)
                 for wt in ["Enhancement","Automation"]:
                     if wt not in by_month.columns: by_month[wt] = 0
                 by_month = by_month[["Enhancement","Automation"]].sort_index()
-                by_month.index = [d.strftime("%b %Y") for d in by_month.index]
+                by_month.index = [d.strftime("%b %y").upper() for d in by_month.index]
                 st.bar_chart(by_month, stack=True, color=["#3b82f6","#14b8a6"], height=350)
             else:
                 st.info("No closed tasks for this filter.")
@@ -1596,14 +1597,14 @@ def render_danger_zone():
 # ============================================================
 # TABS
 # ============================================================
-tab_stats, tab_enh, tab_auto = st.tabs(["STATS", "ENHANCEMENTS", "AUTOMATION"])
-
-with tab_stats:
-    render_stats_page()
-    render_danger_zone()
+tab_enh, tab_auto, tab_stats = st.tabs(["ENHANCEMENTS", "AUTOMATION", "STATS"])
 
 with tab_enh:
     render_work_type_page("Enhancement")
 
 with tab_auto:
     render_work_type_page("Automation")
+
+with tab_stats:
+    render_stats_page()
+    render_danger_zone()
