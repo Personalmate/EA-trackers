@@ -1,6 +1,7 @@
 import re
 import html as _html
 import pandas as pd
+import altair as alt
 from datetime import date, datetime, timedelta
 from snowflake.snowpark.context import get_active_session
 import streamlit as st
@@ -1471,54 +1472,73 @@ def render_stats_page():
 
     st.markdown("<div style='margin-top:16px;'></div>", unsafe_allow_html=True)
 
-    # ==== Chart 1: Total Effort Days by Team Member (top 10) ====
+    # Common chart config
+    AX_TXT = "#fafafa"; AX_GRID = "#2a3040"; AX_BG = "#0e1117"
+    WORK_TYPE_DOMAIN = ["Enhancement", "Automation"]
+    WORK_TYPE_COLORS = ["#3b82f6", "#14b8a6"]
+    STATUS_DOMAIN = OPEN_STATUSES
+    STATUS_COLORS = ["#60a5fa", "#a78bfa", "#fbbf24"]
+
+    def _styled(chart):
+        return chart.configure_view(strokeWidth=0).configure_axis(
+            labelColor=AX_TXT, titleColor=AX_TXT,
+            gridColor=AX_GRID, domainColor=AX_GRID, tickColor=AX_GRID
+        ).configure_legend(labelColor=AX_TXT, titleColor=AX_TXT)
+
+    # ==== Chart 1: Total Effort by Team Member (Days) — sorted descending ====
     ch1, ch2 = st.columns(2)
     with ch1:
-        st.markdown("**Total Effort Days by Team Member**")
+        st.markdown("**Total Effort by Team Member (Days)**")
         try:
             primary = chart_assigns[chart_assigns["ASSIGNEE_ROLE"] == "primary"].merge(
                 chart_tasks[["TASK_ID","EFFORT_DAYS"]], on="TASK_ID", how="left")
             primary["EFFORT_DAYS"] = pd.to_numeric(primary["EFFORT_DAYS"], errors="coerce").fillna(0)
-            grp = primary.groupby("FULL_NAME")["EFFORT_DAYS"].sum()
-            grp = grp.sort_values(ascending=False).head(10).sort_values(ascending=True)
+            grp = primary.groupby("FULL_NAME")["EFFORT_DAYS"].sum().sort_values(ascending=False).head(10)
             if grp.empty or grp.sum() == 0:
                 st.info("No effort data for this filter.")
             else:
                 df = grp.reset_index()
-                df.columns = ["Person", "Effort (Days)"]
-                st.bar_chart(df.set_index("Person"), horizontal=True,
-                             color="#3b82f6", height=350)
+                df.columns = ["Person", "Days"]
+                chart = alt.Chart(df).mark_bar(color="#3b82f6").encode(
+                    x=alt.X("Days:Q", title="Days"),
+                    y=alt.Y("Person:N", sort="-x", title=None),
+                    tooltip=["Person","Days"],
+                ).properties(height=350)
+                st.altair_chart(_styled(chart), use_container_width=True)
         except Exception as e:
             st.caption(f"Chart error: {e}")
 
-    # ==== Chart 2: Open Tasks by Team Member (stacked by status) ====
+    # ==== Chart 2: Open Tasks by Team Member — stacked, sorted descending ====
     with ch2:
-        st.markdown("**Open Tasks by Team Member**")
+        st.markdown("**Open Tasks by Team Member (Count)**")
         try:
             primary = chart_assigns[chart_assigns["ASSIGNEE_ROLE"] == "primary"].merge(
                 chart_tasks[["TASK_ID","STATUS"]], on="TASK_ID", how="left")
             open_df = primary[primary["STATUS"].isin(OPEN_STATUSES)]
-            if not open_df.empty:
-                piv = open_df.pivot_table(index="FULL_NAME", columns="STATUS",
-                                          values="TASK_ID", aggfunc="count", fill_value=0)
-                for s in OPEN_STATUSES:
-                    if s not in piv.columns: piv[s] = 0
-                piv = piv[OPEN_STATUSES]
-                piv["_total"] = piv.sum(axis=1)
-                piv = piv.sort_values("_total", ascending=True).drop(columns=["_total"])
-                st.bar_chart(piv, horizontal=True, stack=True,
-                             color=["#60a5fa","#a78bfa","#fbbf24"], height=350)
-            else:
+            if open_df.empty:
                 st.info("No open tasks for this filter.")
+            else:
+                grp = open_df.groupby(["FULL_NAME","STATUS"]).size().reset_index(name="Tasks")
+                # Order persons by total descending
+                totals = grp.groupby("FULL_NAME")["Tasks"].sum().sort_values(ascending=False)
+                person_order = totals.index.tolist()
+                chart = alt.Chart(grp).mark_bar().encode(
+                    x=alt.X("Tasks:Q", title="Tasks"),
+                    y=alt.Y("FULL_NAME:N", sort=person_order, title=None),
+                    color=alt.Color("STATUS:N",
+                                    scale=alt.Scale(domain=STATUS_DOMAIN, range=STATUS_COLORS),
+                                    legend=alt.Legend(title="Status")),
+                    tooltip=["FULL_NAME","STATUS","Tasks"],
+                ).properties(height=350)
+                st.altair_chart(_styled(chart), use_container_width=True)
         except Exception as e:
             st.caption(f"Chart error: {e}")
 
-    # ==== Chart 3: Total Effort by Team by Month (vertical bars; horizontal x-axis labels) ====
+    # ==== Chart 3: Monthly Effort by Team (Days) — vertical bars, horizontal labels ====
     ch3, ch4 = st.columns(2)
     with ch3:
-        st.markdown("**Total Effort Days by Team by Month**")
+        st.markdown("**Monthly Effort by Team (Days)**")
         try:
-            # Use START_DATE to bucket effort into months
             ef_df = chart_tasks[chart_tasks["_START"].notna()].copy()
             ef_df["EFFORT_DAYS"] = pd.to_numeric(ef_df["EFFORT_DAYS"], errors="coerce").fillna(0)
             if ef_df.empty or ef_df["EFFORT_DAYS"].sum() == 0:
@@ -1527,32 +1547,48 @@ def render_stats_page():
                 ef_df["_MONTH"] = ef_df["_START"].apply(lambda d: d.replace(day=1))
                 cutoff = (today.replace(day=1) - pd.DateOffset(months=11)).date()
                 ef_df = ef_df[ef_df["_MONTH"] >= cutoff]
-                by_month = ef_df.groupby(["_MONTH","WORK_TYPE"])["EFFORT_DAYS"].sum().unstack(fill_value=0)
-                for wt in ["Enhancement","Automation"]:
-                    if wt not in by_month.columns: by_month[wt] = 0
-                by_month = by_month[["Enhancement","Automation"]].sort_index()
-                by_month.index = [d.strftime("%b %y").upper() for d in by_month.index]
-                st.bar_chart(by_month, stack=True, color=["#3b82f6","#14b8a6"], height=350)
+                grp = ef_df.groupby(["_MONTH","WORK_TYPE"])["EFFORT_DAYS"].sum().reset_index()
+                grp["Month"] = grp["_MONTH"].apply(lambda d: d.strftime("%b %y").upper())
+                month_order = sorted(grp["_MONTH"].unique())
+                month_labels = [d.strftime("%b %y").upper() for d in month_order]
+                chart = alt.Chart(grp).mark_bar().encode(
+                    x=alt.X("Month:N", sort=month_labels, title=None,
+                            axis=alt.Axis(labelAngle=0)),
+                    y=alt.Y("EFFORT_DAYS:Q", title="Days"),
+                    color=alt.Color("WORK_TYPE:N",
+                                    scale=alt.Scale(domain=WORK_TYPE_DOMAIN, range=WORK_TYPE_COLORS),
+                                    legend=alt.Legend(title="Work type")),
+                    tooltip=["Month","WORK_TYPE","EFFORT_DAYS"],
+                ).properties(height=350)
+                st.altair_chart(_styled(chart), use_container_width=True)
         except Exception as e:
             st.caption(f"Chart error: {e}")
 
-    # ==== Chart 4: Closed Tasks per Month by Team (vertical bars; horizontal x-axis labels) ====
+    # ==== Chart 4: Monthly Closed Tasks by Team (Count) — vertical bars, horizontal labels ====
     with ch4:
-        st.markdown("**Closed Tasks per Month by Team**")
+        st.markdown("**Monthly Closed Tasks by Team (Count)**")
         try:
             closed_df = chart_tasks[(chart_tasks["STATUS"] == "Closed") & (chart_tasks["_CLOSED"].notna())].copy()
-            if not closed_df.empty:
+            if closed_df.empty:
+                st.info("No closed tasks for this filter.")
+            else:
                 closed_df["_MONTH"] = closed_df["_CLOSED"].apply(lambda d: d.replace(day=1))
                 cutoff = (today.replace(day=1) - pd.DateOffset(months=11)).date()
                 closed_df = closed_df[closed_df["_MONTH"] >= cutoff]
-                by_month = closed_df.groupby(["_MONTH","WORK_TYPE"])["TASK_ID"].count().unstack(fill_value=0)
-                for wt in ["Enhancement","Automation"]:
-                    if wt not in by_month.columns: by_month[wt] = 0
-                by_month = by_month[["Enhancement","Automation"]].sort_index()
-                by_month.index = [d.strftime("%b %y").upper() for d in by_month.index]
-                st.bar_chart(by_month, stack=True, color=["#3b82f6","#14b8a6"], height=350)
-            else:
-                st.info("No closed tasks for this filter.")
+                grp = closed_df.groupby(["_MONTH","WORK_TYPE"]).size().reset_index(name="Tasks")
+                grp["Month"] = grp["_MONTH"].apply(lambda d: d.strftime("%b %y").upper())
+                month_order = sorted(grp["_MONTH"].unique())
+                month_labels = [d.strftime("%b %y").upper() for d in month_order]
+                chart = alt.Chart(grp).mark_bar().encode(
+                    x=alt.X("Month:N", sort=month_labels, title=None,
+                            axis=alt.Axis(labelAngle=0)),
+                    y=alt.Y("Tasks:Q", title="Tasks"),
+                    color=alt.Color("WORK_TYPE:N",
+                                    scale=alt.Scale(domain=WORK_TYPE_DOMAIN, range=WORK_TYPE_COLORS),
+                                    legend=alt.Legend(title="Work type")),
+                    tooltip=["Month","WORK_TYPE","Tasks"],
+                ).properties(height=350)
+                st.altair_chart(_styled(chart), use_container_width=True)
         except Exception as e:
             st.caption(f"Chart error: {e}")
 
